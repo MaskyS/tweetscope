@@ -112,6 +112,58 @@ export function ScopeProvider({ children }) {
   const [clusterMap, setClusterMap] = useState({});
   const [clusterIndices, setClusterIndices] = useState([]);
   const [clusterLabels, setClusterLabels] = useState([]);
+  const [clusterHierarchy, setClusterHierarchy] = useState(null);
+
+  // Build a tree structure from hierarchical cluster labels
+  const buildClusterTree = useCallback((labels) => {
+    if (!labels || labels.length === 0) return null;
+
+    // Group labels by layer
+    const byLayer = {};
+    labels.forEach(label => {
+      const layer = label.layer || 0;
+      if (!byLayer[layer]) byLayer[layer] = [];
+      byLayer[layer].push(label);
+    });
+
+    // Find the max layer (coarsest level)
+    const layers = Object.keys(byLayer).map(Number).sort((a, b) => b - a);
+    const maxLayer = layers[0];
+
+    // Create a lookup map by cluster id
+    const labelMap = {};
+    labels.forEach(label => {
+      labelMap[label.cluster] = { ...label, children: [] };
+    });
+
+    // Build parent-child relationships
+    labels.forEach(label => {
+      if (label.parent_cluster && labelMap[label.parent_cluster]) {
+        labelMap[label.parent_cluster].children.push(labelMap[label.cluster]);
+      }
+    });
+
+    // Root nodes are those at the max layer (or those without parents)
+    const roots = labels
+      .filter(label => label.layer === maxLayer || !label.parent_cluster)
+      .map(label => labelMap[label.cluster]);
+
+    // Sort children by count (descending)
+    const sortChildren = (node) => {
+      if (node.children && node.children.length > 0) {
+        node.children.sort((a, b) => (b.count || 0) - (a.count || 0));
+        node.children.forEach(sortChildren);
+      }
+    };
+    roots.forEach(sortChildren);
+
+    return {
+      name: 'Root',
+      children: roots,
+      layers: layers,
+      totalClusters: labels.length,
+    };
+  }, []);
 
   const [scopeRows, setScopeRows] = useState([]);
 
@@ -136,11 +188,22 @@ export function ScopeProvider({ children }) {
           });
         }
 
-        scopeRows.forEach((d) => {
-          const cluster = scope.cluster_labels_lookup?.[d.cluster];
-          cluster.count += 1;
+        // Build a map from cluster ID to cluster object for efficient lookup
+        // This handles both integer indices (flat labels) and string IDs (hierarchical labels like "0_0")
+        const clusterLookupMap = {};
+        if (scope.cluster_labels_lookup) {
+          scope.cluster_labels_lookup.forEach((c, idx) => {
+            // Support both: cluster field (for hierarchical) and index (for flat)
+            clusterLookupMap[c.cluster] = c;
+            clusterLookupMap[idx] = c;
+          });
+        }
 
-          clusterMap[d.ls_index] = cluster;
+        scopeRows.forEach((d) => {
+          const cluster = clusterLookupMap[d.cluster];
+          if (cluster) cluster.count += 1;
+
+          clusterMap[d.ls_index] = cluster || { cluster: d.cluster, label: d.label || 'Unknown' };
           //   clusterMap[d.ls_index] = { cluster: d.cluster, label: d.label };
           if (!d.deleted) {
             nonDeletedClusters.add(d.cluster);
@@ -156,6 +219,15 @@ export function ScopeProvider({ children }) {
         setClusterMap(clusterMap);
 
         setDeletedIndices(scopeRows.filter((d) => d.deleted).map((d) => d.ls_index));
+
+        // Build hierarchical tree if this is a hierarchical scope
+        if (scope.hierarchical_labels && labelsData.length > 0) {
+          const hierarchy = buildClusterTree(labelsData);
+          setClusterHierarchy(hierarchy);
+        } else {
+          setClusterHierarchy(null);
+        }
+
         setScopeLoaded(true);
       })
       .catch((error) => console.error('Fetching data failed', error));
@@ -175,6 +247,7 @@ export function ScopeProvider({ children }) {
     scopeLoaded,
     clusterMap,
     clusterLabels,
+    clusterHierarchy,
     scopeRows,
     deletedIndices,
     features,

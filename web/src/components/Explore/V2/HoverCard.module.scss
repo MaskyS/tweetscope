@@ -1,0 +1,84 @@
+.hoverCard {
+  // Override react-tooltip defaults
+  background: rgba(255, 255, 255, 0.95) !important;
+  backdrop-filter: blur(8px);
+  border-radius: 8px !important;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15) !important;
+  padding: 12px 14px !important;
+  max-width: 320px;
+  min-width: 200px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  opacity: 1 !important;
+  color: #333 !important;
+  z-index: 9999 !important;
+
+  :global(.dark) & {
+    background: rgba(30, 30, 30, 0.95) !important;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4) !important;
+    color: #e0e0e0 !important;
+  }
+}
+
+.clusterRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.clusterDot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.clusterLabel {
+  font-size: 13px;
+  font-weight: 600;
+  color: #333;
+  line-height: 1.3;
+
+  :global(.dark) & {
+    color: #e0e0e0;
+  }
+}
+
+.clusterNumber {
+  font-size: 11px;
+  color: #888;
+  font-weight: 400;
+
+  :global(.dark) & {
+    color: #777;
+  }
+}
+
+.indexRow {
+  font-size: 11px;
+  color: #666;
+  margin-bottom: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+
+  :global(.dark) & {
+    color: #888;
+    border-bottom-color: rgba(255, 255, 255, 0.1);
+  }
+}
+
+.textPreview {
+  font-size: 13px;
+  line-height: 1.5;
+  color: #444;
+  margin: 0;
+  max-height: 120px;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 5;
+  -webkit-box-orient: vertical;
+
+  :global(.dark) & {
+    color: #ccc;
+  }
+}

@@ -172,3 +172,7 @@ widgetsnbextension~=4.0.9
 yarl~=1.9.4
 zipp~=3.17.0
 lancedb~=0.19.0
+litellm
+fast_hdbscan>=0.2.2
+vectorizers
+apricot-select

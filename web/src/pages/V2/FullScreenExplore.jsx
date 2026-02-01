@@ -9,7 +9,8 @@ import FilterActions from '../../components/Explore/V2/FilterActions';
 import SubNav from '../../components/SubNav';
 import LeftPane from '../../components/Explore/LeftPane';
 import VisualizationPane from '../../components/Explore/V2/VisualizationPane';
-import FilterDataTable from '../../components/Explore/V2/FilterDataTable';
+import TweetFeed from '../../components/Explore/V2/TweetFeed';
+import TopicTree from '../../components/Explore/V2/TopicTree';
 
 import { ScopeProvider, useScope } from '../../contexts/ScopeContext';
 import { FilterProvider, useFilter } from '../../contexts/FilterContext';
@@ -20,7 +21,7 @@ import { filterConstants } from '../../components/Explore/V2/Search/utils';
 const styles = {
   dragHandle: {
     position: 'absolute',
-    right: -15,
+    left: -15,
     top: 0,
     bottom: 0,
     width: 30,
@@ -47,6 +48,7 @@ function ExploreContent() {
     deletedIndices,
     clusterMap,
     clusterLabels,
+    clusterHierarchy,
     features,
     sae,
     scopes,
@@ -161,6 +163,12 @@ function ExploreContent() {
 
   const containerRef = useRef(null);
   const filtersContainerRef = useRef(null);
+  const vizRef = useRef(null);
+
+  // Handle zoom to cluster from TopicTree
+  const handleZoomToCluster = useCallback((bounds) => {
+    vizRef.current?.zoomToBounds(bounds, 500);
+  }, []);
 
   const [filtersHeight, setFiltersHeight] = useState(250);
   const FILTERS_PADDING = 2;
@@ -256,6 +264,7 @@ function ExploreContent() {
     if (containerRef.current) {
       const containerRect = containerRef.current.getBoundingClientRect();
       const percentage = ((e.clientX - containerRect.left) / containerRect.width) * 100;
+      // Graph is on left, sidebar on right. The percentage is the graph width.
       const newTemplate = `${Math.min(Math.max(percentage, 20), 80)}% 1fr`;
       setGridTemplate(newTemplate);
       updateSize();
@@ -310,42 +319,6 @@ function ExploreContent() {
           style={{ gridTemplateColumns: gridTemplate }}
         >
           <div
-            className="filter-table-container"
-            style={{ position: 'relative', overflowX: 'hidden' }}
-          >
-            <div style={styles.dragHandle} onMouseDown={startDragging} />
-            <div ref={filtersContainerRef}>
-              <FilterActions
-                clusterLabels={clusterLabels}
-                scatter={scatter}
-                scope={scope}
-                dataset={dataset}
-              />
-            </div>
-            <div
-              style={{
-                height: tableHeight,
-                overflowY: 'auto',
-                display: 'flex',
-              }}
-            >
-              <FilterDataTable
-                userId={userId}
-                dataset={dataset}
-                scope={scope}
-                distances={searchFilter.distances}
-                clusterMap={clusterMap}
-                clusterLabels={clusterLabels}
-                sae_id={sae?.id}
-                feature={featureFilter.feature}
-                features={features}
-                onHover={handleHover}
-                onClick={handleClicked}
-                handleFeatureClick={handleFeatureClick}
-              />
-            </div>
-          </div>
-          <div
             ref={visualizationContainerRef}
             className="visualization-pane-container"
             onMouseLeave={() => {
@@ -355,6 +328,7 @@ function ExploreContent() {
           >
             {scopeRows?.length && scopeLoaded ? (
               <VisualizationPane
+                ref={vizRef}
                 width={width}
                 height={height}
                 onScatter={setScatter}
@@ -368,6 +342,44 @@ function ExploreContent() {
                 dataTableRows={dataTableRows}
               />
             ) : null}
+          </div>
+          <div
+            className="filter-table-container"
+            style={{ position: 'relative', overflowX: 'hidden' }}
+          >
+            <div style={styles.dragHandle} onMouseDown={startDragging} />
+            <div ref={filtersContainerRef}>
+              <FilterActions
+                clusterLabels={clusterLabels}
+                scatter={scatter}
+                scope={scope}
+                dataset={dataset}
+              />
+              {/* Topic Tree for hierarchical labels */}
+              {scope?.hierarchical_labels && clusterHierarchy && (
+                <div style={{ maxHeight: '200px', marginTop: '8px', overflow: 'hidden' }}>
+                  <TopicTree onZoomToCluster={handleZoomToCluster} />
+                </div>
+              )}
+            </div>
+            <div
+              style={{
+                height: tableHeight,
+                overflow: 'hidden',
+                display: 'flex',
+              }}
+            >
+              <TweetFeed
+                dataset={dataset}
+                distances={searchFilter.distances}
+                clusterMap={clusterMap}
+                sae_id={sae?.id}
+                onHover={handleHover}
+                onClick={handleClicked}
+                hoveredIndex={hoveredIndex}
+                height={filtersHeight > 0 ? window.innerHeight - filtersHeight - 150 : 500}
+              />
+            </div>
           </div>
         </div>
       </div>

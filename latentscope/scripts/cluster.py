@@ -162,6 +162,17 @@ def clusterer(dataset_id, umap_id, samples, min_samples, cluster_selection_epsil
 
     # write the df to parquet
     slides_df.to_parquet(os.path.join(cluster_dir, f"{cluster_id}-labels-default.parquet"))
+
+    # write the json metadata for default labels
+    default_labels_meta = {
+        "id": f"{cluster_id}-labels-default",
+        "cluster_id": cluster_id,
+        "model_id": "default",
+        "label_column": "label"
+    }
+    with open(os.path.join(cluster_dir, f"{cluster_id}-labels-default.json"), 'w') as f:
+        json.dump(default_labels_meta, f, indent=2)
+
     print("done with", cluster_id)
 
 if __name__ == "__main__":

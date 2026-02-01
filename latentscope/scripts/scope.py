@@ -175,14 +175,52 @@ def scope(dataset_id, embedding_id, umap_id, cluster_id, cluster_labels_id, labe
 
     # load the actual labels and save everything but the indices in a dict
     cluster_labels_df = pd.read_parquet(os.path.join(DATA_DIR, dataset_id, "clusters", cluster_labels_id + ".parquet"))
-    # remove the indices column
 
-    cluster_labels_df = cluster_labels_df.drop(columns=[col for col in ["indices", "labeled", "label_raw"] if col in cluster_labels_df.columns])
-    # cluster_labels_df = cluster_labels_df.drop(columns=["indices", "labeled", "label_raw"])
-    # change hulls to a list of lists
-    cluster_labels_df["hull"] = cluster_labels_df["hull"].apply(lambda x: x.tolist())
-    cluster_labels_df["cluster"] = cluster_labels_df.index
-    scope["cluster_labels_lookup"] = cluster_labels_df.to_dict(orient="records")
+    # Check if this is a hierarchical (Toponymy) cluster labels file
+    is_hierarchical = "layer" in cluster_labels_df.columns
+
+    if is_hierarchical:
+        # Hierarchical labels from Toponymy
+        # Keep: cluster, layer, label, description, hull, count, parent_cluster, children, centroid_x, centroid_y
+        # Drop: indices (too large for JSON)
+        cluster_labels_df = cluster_labels_df.drop(columns=[col for col in ["indices"] if col in cluster_labels_df.columns])
+
+        # Convert hull to list if it's a numpy array
+        if "hull" in cluster_labels_df.columns:
+            cluster_labels_df["hull"] = cluster_labels_df["hull"].apply(
+                lambda x: x.tolist() if hasattr(x, 'tolist') else x
+            )
+
+        # Convert children to list if it's a numpy array
+        if "children" in cluster_labels_df.columns:
+            cluster_labels_df["children"] = cluster_labels_df["children"].apply(
+                lambda x: x.tolist() if hasattr(x, 'tolist') else x
+            )
+
+        cluster_labels_list = cluster_labels_df.to_dict(orient="records")
+        # Add an "unknown" cluster for unclustered points
+        cluster_labels_list.append({
+            "cluster": "unknown",
+            "layer": 0,
+            "label": "Unclustered",
+            "description": "Points not assigned to any cluster",
+            "hull": [],
+            "count": 0,
+            "parent_cluster": None,
+            "children": [],
+            "centroid_x": 0,
+            "centroid_y": 0
+        })
+        scope["cluster_labels_lookup"] = cluster_labels_list
+        scope["hierarchical_labels"] = True
+    else:
+        # Standard (flat) cluster labels
+        cluster_labels_df = cluster_labels_df.drop(columns=[col for col in ["indices", "labeled", "label_raw"] if col in cluster_labels_df.columns])
+        # change hulls to a list of lists
+        cluster_labels_df["hull"] = cluster_labels_df["hull"].apply(lambda x: x.tolist())
+        cluster_labels_df["cluster"] = cluster_labels_df.index
+        scope["cluster_labels_lookup"] = cluster_labels_df.to_dict(orient="records")
+        scope["hierarchical_labels"] = False
     
     # create a scope parquet by combining the parquets from umap and cluster, as well as getting the labels from cluster_labels
     # then write the parquet to the scopes directory
@@ -214,7 +252,27 @@ def scope(dataset_id, embedding_id, umap_id, cluster_id, cluster_labels_id, labe
     cluster_df = pd.read_parquet(os.path.join(DATA_DIR, dataset_id, "clusters", cluster_id + ".parquet"))
     cluster_labels_df = pd.read_parquet(os.path.join(DATA_DIR, dataset_id, "clusters", cluster_labels_id + ".parquet"))
     # create a column where we lookup the label from cluster_labels_df for the index found in the cluster_df
-    cluster_df["label"] = cluster_df["cluster"].apply(lambda x: cluster_labels_df.loc[x]["label"])
+    if is_hierarchical:
+        # For hierarchical labels, use layer 0 (finest) clusters
+        # Build mapping from point index to toponymy cluster ID using 'indices' field
+        layer0_labels = cluster_labels_df[cluster_labels_df["layer"] == 0].copy()
+
+        # Create mapping: point_index -> cluster_id (e.g., "0_0")
+        point_to_cluster = {}
+        point_to_label = {}
+        for _, row in layer0_labels.iterrows():
+            cluster_id_str = row["cluster"]
+            label = row["label"]
+            indices = row["indices"]
+            for idx in indices:
+                point_to_cluster[idx] = cluster_id_str
+                point_to_label[idx] = label
+
+        # Replace cluster column with toponymy cluster IDs
+        cluster_df["cluster"] = cluster_df.index.map(point_to_cluster).fillna("unknown")
+        cluster_df["label"] = cluster_df.index.map(point_to_label).fillna("Unknown")
+    else:
+        cluster_df["label"] = cluster_df["cluster"].apply(lambda x: cluster_labels_df.loc[x]["label"])
     print("cluster columns", cluster_df.columns)
     scope_parquet = pd.concat([umap_df, cluster_df], axis=1)
     # TODO: add the max activated feature to the scope_parquet

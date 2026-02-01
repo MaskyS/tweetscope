@@ -56,5 +56,14 @@
       "truncation": true,
       "max_tokens": 32000
     }
+  },
+  {
+    "provider": "voyageai",
+    "name": "voyage-4-lite",
+    "id": "voyageai-voyage-4-lite",
+    "params": {
+      "truncation": true,
+      "max_tokens": 32000
+    }
   }
 ]

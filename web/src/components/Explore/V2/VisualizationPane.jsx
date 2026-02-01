@@ -1,16 +1,17 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef, forwardRef, useImperativeHandle } from 'react';
 import { groups } from 'd3-array';
 import PropTypes from 'prop-types';
 // import Scatter from '../Scatter';
 // import Scatter from '../ScatterCanvas';
-import Scatter from './ScatterGL';
+// import Scatter from './ScatterGL';
+import Scatter, { getClusterColorCSS } from './DeckGLScatter';
 import AnnotationPlot from '../../AnnotationPlot';
 import HullPlot from '../../HullPlot';
 import TilePlot from '../../TilePlot';
 import { Tooltip } from 'react-tooltip';
 import CrossHair from './Crosshair';
 import { processHulls } from './util';
-import PointLabel from './PointLabel';
+// import PointLabel from './PointLabel'; // Removed - DeckGLScatter handles this internally
 import { filterConstants } from './Search/utils';
 
 // import { useColorMode } from '../../hooks/useColorMode';
@@ -20,6 +21,7 @@ import { useFilter } from '../../../contexts/FilterContext';
 
 import { mapSelectionOpacity, mapPointSizeRange, mapSelectionKey } from '../../../lib/colors';
 import styles from './VisualizationPane.module.scss';
+import hoverStyles from './HoverCard.module.scss';
 import ConfigurationPanel from '../ConfigurationPanel';
 import { Icon, Button } from 'react-element-forge';
 
@@ -37,7 +39,7 @@ import { Icon, Button } from 'react-element-forge';
 //   containerRef: PropTypes.object.isRequired,
 // };
 
-function VisualizationPane({
+const VisualizationPane = forwardRef(function VisualizationPane({
   width,
   height,
   onScatter,
@@ -49,7 +51,7 @@ function VisualizationPane({
   selectedAnnotations,
   hoveredCluster,
   dataTableRows,
-}) {
+}, ref) {
   const { scopeRows, clusterLabels, clusterMap, deletedIndices, scope, features } = useScope();
 
   const { featureFilter, clusterFilter, shownIndices, filterConfig } = useFilter();
@@ -58,6 +60,16 @@ function VisualizationPane({
   const showHull = filterConfig?.type === filterConstants.CLUSTER;
 
   const maxZoom = 40;
+
+  // Ref for scatter component to enable programmatic zoom
+  const scatterRef = useRef(null);
+
+  // Expose zoomToBounds method to parent
+  useImperativeHandle(ref, () => ({
+    zoomToBounds: (bounds, duration) => {
+      scatterRef.current?.zoomToBounds(bounds, duration);
+    }
+  }), []);
 
   const [xDomain, setXDomain] = useState([-1, 1]);
   const [yDomain, setYDomain] = useState([-1, 1]);
@@ -101,28 +113,29 @@ function VisualizationPane({
     return lookup;
   }, [featureIsSelected, dataTableRows, featureFilter.feature, features]);
 
+  // Points format: [x, y, selectionKey, activation, cluster]
   const drawingPoints = useMemo(() => {
     return scopeRows.map((p, i) => {
+      const cluster = p.cluster ?? 0;
+
       if (featureIsSelected) {
         if (shownIndices?.includes(i)) {
           const activation = featureActivationMap.get(p.ls_index);
           return activation !== undefined
-            ? [p.x, p.y, mapSelectionKey.selected, activation]
-            : [p.x, p.y, mapSelectionKey.notSelected, 0.0];
+            ? [p.x, p.y, mapSelectionKey.selected, activation, cluster]
+            : [p.x, p.y, mapSelectionKey.notSelected, 0.0, cluster];
         }
-        return [p.x, p.y, mapSelectionKey.notSelected, 0.0];
+        return [p.x, p.y, mapSelectionKey.notSelected, 0.0, cluster];
       }
 
       if (p.deleted) {
-        return [-10, -10, mapSelectionKey.hidden, 0.0];
-        //   } else if (hoveredIndex === i) {
-        //     return [p.x, p.y, mapSelectionKey.hovered, 0.0];
+        return [-10, -10, mapSelectionKey.hidden, 0.0, cluster];
       } else if (shownIndices?.includes(i)) {
-        return [p.x, p.y, mapSelectionKey.selected, 0.0];
+        return [p.x, p.y, mapSelectionKey.selected, 0.0, cluster];
       } else if (shownIndices?.length) {
-        return [p.x, p.y, mapSelectionKey.notSelected, 0.0];
+        return [p.x, p.y, mapSelectionKey.notSelected, 0.0, cluster];
       } else {
-        return [p.x, p.y, mapSelectionKey.normal, 0.0];
+        return [p.x, p.y, mapSelectionKey.normal, 0.0, cluster];
       }
     });
   }, [scopeRows, shownIndices, featureActivationMap, featureIsSelected]);
@@ -287,6 +300,7 @@ function VisualizationPane({
       <div className={styles.scatters + ' ' + (isFullScreen ? styles.fullScreen : '')}>
         {scope && (
           <Scatter
+            ref={scatterRef}
             points={drawingPoints}
             width={width}
             height={height}
@@ -386,16 +400,7 @@ function VisualizationPane({
             // stroke="black"
           />
         )}
-        <PointLabel
-          selectedPoints={selectedPoints}
-          hovered={hovered}
-          xDomain={xDomain}
-          yDomain={yDomain}
-          width={width}
-          height={height}
-          k={transform.k}
-          maxZoom={maxZoom}
-        />
+        {/* PointLabel removed - numbered dots were conflicting with DeckGL coordinates */}
         {/* <CrossHair xDomain={xDomain} yDomain={yDomain} width={width} height={height} /> */}
       </div>
 
@@ -419,27 +424,24 @@ function VisualizationPane({
           delayHide={0}
           delayUpdate={0}
           noArrow={true}
-          className="tooltip-area"
-          style={{
-            position: 'absolute',
-            left: 0,
-            top: 0,
-            pointerEvents: 'none',
-            width: '400px',
-            backgroundColor: '#D3965E',
-          }}
+          className={`tooltip-area ${hoverStyles.hoverCard}`}
         >
-          <div className="tooltip-content">
-            {hoveredCluster && (
-              <span>
-                <span className="key">Cluster {hoveredCluster.cluster}: </span>
-                <span className="value">{hoveredCluster.label}</span>
+          {hoveredCluster && (
+            <div className={hoverStyles.clusterRow}>
+              <span
+                className={hoverStyles.clusterDot}
+                style={{ backgroundColor: getClusterColorCSS(hoveredCluster.cluster) }}
+              />
+              <span className={hoverStyles.clusterLabel}>
+                {hoveredCluster.label}
+                <span className={hoverStyles.clusterNumber}> #{hoveredCluster.cluster}</span>
               </span>
-            )}
-            <br></br>
-            <span>Index: {hovered.index}</span>
-            <p className="tooltip-text">{hovered.text}</p>
+            </div>
+          )}
+          <div className={hoverStyles.indexRow}>
+            Index: {hovered.index}
           </div>
+          <p className={hoverStyles.textPreview}>{hovered.text}</p>
         </Tooltip>
       )}
 
@@ -496,6 +498,6 @@ function VisualizationPane({
           )} */}
     </div>
   );
-}
+});
 
 export default VisualizationPane;

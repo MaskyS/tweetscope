@@ -525,3 +525,28 @@ def upload_dataset():
     command = f'ls-upload-dataset "{path}" "{hf_dataset}" --main-parquet="{main_parquet}" --private={private}'
     threading.Thread(target=run_job, args=(dataset, job_id, command)).start()
     return jsonify({"job_id": job_id})
+
+@jobs_write_bp.route('/toponymy')
+def run_toponymy():
+    """Run Toponymy hierarchical labeling on a scope."""
+    dataset = request.args.get('dataset')
+    scope_id = request.args.get('scope_id')
+    llm_provider = request.args.get('llm_provider', 'openai')
+    llm_model = request.args.get('llm_model', 'gpt-4o-mini')
+    min_clusters = request.args.get('min_clusters', '2')
+    base_min_cluster_size = request.args.get('base_min_cluster_size', '10')
+    context = request.args.get('context', '')
+    print("run toponymy", dataset, scope_id, llm_provider, llm_model, min_clusters, base_min_cluster_size)
+
+    job_id = str(uuid.uuid4())
+    command = f'python -m latentscope.scripts.toponymy_labels "{dataset}" "{scope_id}"'
+    command += f' --llm-provider="{llm_provider}"'
+    command += f' --llm-model="{llm_model}"'
+    command += f' --min-clusters={min_clusters}'
+    command += f' --base-min-cluster-size={base_min_cluster_size}'
+    if context:
+        escaped_context = context.replace('"', '\\"')
+        command += f' --context="{escaped_context}"'
+
+    threading.Thread(target=run_job, args=(dataset, job_id, command)).start()
+    return jsonify({"job_id": job_id})
