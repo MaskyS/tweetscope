@@ -1,35 +1,54 @@
 .tweetCard {
-  padding: 12px 16px;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.1);
+  padding: var(--space-4) var(--space-5);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.04);
   cursor: pointer;
-  transition: background-color 0.15s ease;
+  transition: all var(--transition-fast);
+  position: relative;
 
-  &:hover {
-    background-color: rgba(0, 0, 0, 0.03);
+  &::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.2), rgba(255, 255, 255, 0.05));
+    transition: opacity var(--transition-fast);
+    pointer-events: none;
   }
 
-  :global(.dark) & {
-    border-bottom-color: rgba(255, 255, 255, 0.1);
+  &:hover {
+    background: rgba(255, 255, 255, 0.5);
 
-    &:hover {
-      background-color: rgba(255, 255, 255, 0.03);
+    &::before {
+      opacity: 1;
     }
+
+    @media (prefers-color-scheme: dark) {
+      background: rgba(255, 255, 255, 0.04);
+    }
+  }
+
+  @media (prefers-color-scheme: dark) {
+    border-bottom-color: rgba(255, 255, 255, 0.04);
   }
 }
 
 .tweetCardHighlighted {
-  background-color: rgba(139, 207, 102, 0.15);
-  border-left: 3px solid #8bcf66;
+  background: rgba(139, 207, 102, 0.08);
 
-  :global(.dark) & {
-    background-color: rgba(139, 207, 102, 0.1);
+  &::before {
+    opacity: 1;
+    background: linear-gradient(135deg, rgba(139, 207, 102, 0.06), transparent);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    background: rgba(139, 207, 102, 0.06);
   }
 }
 
 .tweetHeader {
   display: flex;
   align-items: flex-start;
-  gap: 12px;
+  gap: var(--space-3);
 }
 
 .avatar {
@@ -39,10 +58,12 @@
   display: flex;
   align-items: center;
   justify-content: center;
+  font-family: 'Golos Text', system-ui, sans-serif;
   font-weight: 600;
   font-size: 14px;
   color: #fff;
   flex-shrink: 0;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
 }
 
 .headerContent {
@@ -53,75 +74,67 @@
 .headerRow {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-1);
   flex-wrap: wrap;
 }
 
 .clusterLabel {
+  font-family: 'Golos Text', system-ui, sans-serif;
   font-weight: 600;
-  font-size: 14px;
-  color: #333;
+  font-size: 15px;
+  color: var(--text-color-text-main);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 180px;
-
-  :global(.dark) & {
-    color: #e0e0e0;
-  }
+  max-width: 200px;
+  letter-spacing: -0.01em;
 }
 
 .clusterHandle {
-  font-size: 13px;
-  color: #666;
+  font-family: 'Golos Text', system-ui, sans-serif;
+  font-size: 14px;
+  font-weight: 400;
+  color: var(--text-color-text-subtle);
+  opacity: 0.7;
   flex-shrink: 0;
-
-  :global(.dark) & {
-    color: #888;
-  }
 }
 
 .separator {
-  color: #999;
-
-  :global(.dark) & {
-    color: #666;
-  }
+  color: var(--text-color-text-subtle);
+  opacity: 0.4;
+  font-size: 14px;
 }
 
 .index {
+  font-family: 'Golos Text', system-ui, sans-serif;
   font-size: 13px;
-  color: #666;
-
-  :global(.dark) & {
-    color: #888;
-  }
+  font-weight: 400;
+  color: var(--text-color-text-subtle);
+  opacity: 0.6;
 }
 
 .date {
+  font-family: 'Golos Text', system-ui, sans-serif;
   font-size: 13px;
-  color: #666;
+  font-weight: 400;
+  color: var(--text-color-text-subtle);
   cursor: default;
+  opacity: 0.7;
 
   &:hover {
-    text-decoration: underline;
-  }
-
-  :global(.dark) & {
-    color: #888;
+    opacity: 1;
   }
 }
 
 .tweetBody {
-  font-size: 14px;
+  font-family: 'Golos Text', system-ui, sans-serif;
+  font-size: 16px;
+  font-weight: 500;
   line-height: 1.5;
-  color: #333;
+  color: var(--text-color-text-main);
   word-break: break-word;
-  margin-top: 4px;
-
-  :global(.dark) & {
-    color: #e0e0e0;
-  }
+  margin-top: var(--space-2);
+  letter-spacing: -0.005em;
 }
 
 .tweetBodyTruncated {
@@ -132,62 +145,195 @@
 }
 
 .showMore {
-  color: #1d9bf0;
+  font-family: 'Golos Text', system-ui, sans-serif;
   font-size: 13px;
+  font-weight: 500;
+  color: var(--interactions---primary-color-interaction-primary);
   cursor: pointer;
-  margin-top: 4px;
+  margin-top: var(--space-1);
   display: inline-block;
+  transition: opacity var(--transition-fast);
 
   &:hover {
-    text-decoration: underline;
+    opacity: 0.8;
   }
+}
+
+.mediaContainer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.mediaLink {
+  display: block;
+  flex: 1;
+  min-width: 120px;
+  max-width: 100%;
+}
+
+.mediaImage {
+  width: 100%;
+  height: auto;
+  max-height: 300px;
+  object-fit: cover;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--glass-border-subtle);
+  transition: transform var(--transition-fast), opacity var(--transition-fast);
+
+  &:hover {
+    transform: scale(1.02);
+    opacity: 0.95;
+  }
+}
+
+.quotedTweetsContainer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+.quotedTweetLink {
+  text-decoration: none;
+}
+
+.quotedTweetCard {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  background: rgba(0, 0, 0, 0.03);
+  border: 1px solid var(--glass-border-subtle);
+  border-radius: var(--radius-md);
+  font-family: 'Golos Text', system-ui, sans-serif;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-color-text-subtle);
+  transition: all var(--transition-fast);
+
+  &:hover {
+    background: rgba(0, 0, 0, 0.06);
+    border-color: rgba(0, 0, 0, 0.1);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    background: rgba(255, 255, 255, 0.04);
+
+    &:hover {
+      background: rgba(255, 255, 255, 0.08);
+    }
+  }
+}
+
+.quotedTweetIcon {
+  font-size: 14px;
+}
+
+.quotedTweetText {
+  flex: 1;
+  color: var(--interactions---primary-color-interaction-primary);
 }
 
 .metricsRow {
   display: flex;
   align-items: center;
-  gap: 16px;
-  margin-top: 10px;
-  padding-top: 8px;
-  border-top: 1px solid rgba(0, 0, 0, 0.05);
-
-  :global(.dark) & {
-    border-top-color: rgba(255, 255, 255, 0.05);
-  }
+  gap: var(--space-4);
+  margin-top: var(--space-3);
+  padding-top: var(--space-2);
 }
 
 .metricBadge {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-1);
+  font-family: 'Golos Text', system-ui, sans-serif;
   font-size: 13px;
-  color: #536471;
+  font-weight: 500;
+  color: var(--text-color-text-subtle);
+  opacity: 0.7;
+  transition: opacity var(--transition-fast);
 
-  :global(.dark) & {
-    color: #8b98a5;
+  &:hover {
+    opacity: 1;
   }
 }
 
 .metricIcon {
-  font-size: 14px;
+  flex-shrink: 0;
 }
 
 .twitterLink {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-family: 'Golos Text', system-ui, sans-serif;
   font-size: 13px;
+  font-weight: 500;
   color: #1d9bf0;
   text-decoration: none;
-  padding: 2px 8px;
-  border-radius: 12px;
-  background: rgba(29, 155, 240, 0.1);
-  transition: background-color 0.15s ease;
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-full);
+  background: rgba(29, 155, 240, 0.08);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  transition: all var(--transition-fast);
 
   &:hover {
-    background: rgba(29, 155, 240, 0.2);
-    text-decoration: none;
+    background: rgba(29, 155, 240, 0.15);
   }
 
-  :global(.dark) & {
-    background: rgba(29, 155, 240, 0.15);
+  @media (prefers-color-scheme: dark) {
+    background: rgba(29, 155, 240, 0.12);
+
+    &:hover {
+      background: rgba(29, 155, 240, 0.2);
+    }
+  }
+}
+
+.embedButton {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-family: 'Golos Text', system-ui, sans-serif;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-color-text-subtle);
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-full);
+  background: rgba(0, 0, 0, 0.04);
+  border: none;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+
+  &:hover {
+    background: rgba(29, 155, 240, 0.1);
+    color: #1d9bf0;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    background: rgba(255, 255, 255, 0.06);
+
+    &:hover {
+      background: rgba(29, 155, 240, 0.15);
+    }
+  }
+}
+
+.embedButtonActive {
+  background: rgba(29, 155, 240, 0.12);
+  color: #1d9bf0;
+
+  &:hover {
+    background: rgba(29, 155, 240, 0.18);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    background: rgba(29, 155, 240, 0.2);
 
     &:hover {
       background: rgba(29, 155, 240, 0.25);
@@ -198,21 +344,26 @@
 .similarityBadge {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-1);
+  font-family: 'Golos Text', system-ui, sans-serif;
   font-size: 12px;
-  color: #666;
-  background: rgba(0, 0, 0, 0.05);
-  padding: 4px 8px;
-  border-radius: 12px;
+  font-weight: 500;
+  color: var(--text-color-text-subtle);
+  background: rgba(0, 0, 0, 0.04);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-full);
 
-  :global(.dark) & {
-    color: #aaa;
-    background: rgba(255, 255, 255, 0.08);
+  @media (prefers-color-scheme: dark) {
+    color: var(--text-color-text-subtle);
+    background: rgba(255, 255, 255, 0.06);
   }
 }
 
 .similarityIcon {
   font-size: 10px;
+  font-weight: 600;
 }
 
 .featureContainer {
@@ -223,13 +374,14 @@
 .featureBars {
   display: flex;
   align-items: flex-end;
-  gap: 1px;
+  gap: 2px;
   height: 20px;
 }
 
 .featureBar {
   width: 4px;
-  background: #8bcf66;
-  border-radius: 1px;
-  min-height: 2px;
+  background: var(--semantic-color-semantic-success);
+  border-radius: 2px;
+  min-height: 3px;
+  opacity: 0.8;
 }
