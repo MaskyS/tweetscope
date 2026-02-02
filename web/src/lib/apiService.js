@@ -339,4 +339,22 @@ export const apiService = {
       body: JSON.stringify({ dataset: datasetId, filters: filters }),
     }).then((response) => response.json());
   },
+  resolveUrl: async (url) => {
+    return fetch(`${apiUrl}/resolve-url`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ url }),
+    }).then((response) => response.json());
+  },
+  resolveUrls: async (urls) => {
+    return fetch(`${apiUrl}/resolve-urls`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ urls }),
+    }).then((response) => response.json());
+  },
 };

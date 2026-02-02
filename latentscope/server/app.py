@@ -6,6 +6,7 @@ import math
 import h5py
 import logging
 import argparse
+import requests
 import numpy as np
 import pandas as pd
 from importlib.resources import files
@@ -74,6 +75,119 @@ from .models import models_bp, models_write_bp
 app.register_blueprint(models_bp, url_prefix='/api/models')
 if not READ_ONLY:
     app.register_blueprint(models_write_bp, url_prefix='/api/models')
+
+# ===========================================================
+# URL Resolution for t.co links (Twitter/X media embedding)
+# Used for lazy-loading media/quotes when cards become visible
+# ===========================================================
+
+# Cache for resolved URLs to avoid repeated lookups
+URL_CACHE = {}
+
+@app.route('/api/resolve-url', methods=['POST'])
+def resolve_url():
+    """
+    Resolve a t.co shortened URL to its final destination.
+    Returns the final URL and its type (image, video, quote, external).
+    """
+    data = request.get_json()
+    url = data.get('url')
+
+    if not url:
+        return jsonify(error="No URL provided"), 400
+
+    # Check cache first
+    if url in URL_CACHE:
+        return jsonify(URL_CACHE[url])
+
+    try:
+        # Follow redirects to get final URL
+        response = requests.head(url, allow_redirects=True, timeout=5)
+        final_url = response.url
+
+        # Determine content type based on URL pattern
+        content_type = "external"
+        media_url = None
+
+        if "pbs.twimg.com/media" in final_url:
+            content_type = "image"
+            media_url = final_url
+        elif "video.twimg.com" in final_url:
+            content_type = "video"
+            media_url = final_url
+        elif re.match(r'https?://(twitter\.com|x\.com)/\w+/status/\d+', final_url):
+            content_type = "quote"
+            # Extract tweet ID from URL
+            match = re.search(r'/status/(\d+)', final_url)
+            if match:
+                media_url = match.group(1)  # Just the tweet ID
+        elif final_url.endswith(('.jpg', '.jpeg', '.png', '.gif', '.webp')):
+            content_type = "image"
+            media_url = final_url
+
+        result = {
+            "original": url,
+            "final": final_url,
+            "type": content_type,
+            "media_url": media_url
+        }
+
+        # Cache the result
+        URL_CACHE[url] = result
+
+        return jsonify(result)
+
+    except requests.RequestException as e:
+        return jsonify(error=str(e), original=url), 500
+
+@app.route('/api/resolve-urls', methods=['POST'])
+def resolve_urls():
+    """
+    Batch resolve multiple t.co URLs.
+    """
+    data = request.get_json()
+    urls = data.get('urls', [])
+
+    results = []
+    for url in urls:
+        if url in URL_CACHE:
+            results.append(URL_CACHE[url])
+        else:
+            try:
+                response = requests.head(url, allow_redirects=True, timeout=5)
+                final_url = response.url
+
+                content_type = "external"
+                media_url = None
+
+                if "pbs.twimg.com/media" in final_url:
+                    content_type = "image"
+                    media_url = final_url
+                elif "video.twimg.com" in final_url:
+                    content_type = "video"
+                    media_url = final_url
+                elif re.match(r'https?://(twitter\.com|x\.com)/\w+/status/\d+', final_url):
+                    content_type = "quote"
+                    match = re.search(r'/status/(\d+)', final_url)
+                    if match:
+                        media_url = match.group(1)
+                elif final_url.endswith(('.jpg', '.jpeg', '.png', '.gif', '.webp')):
+                    content_type = "image"
+                    media_url = final_url
+
+                result = {
+                    "original": url,
+                    "final": final_url,
+                    "type": content_type,
+                    "media_url": media_url
+                }
+                URL_CACHE[url] = result
+                results.append(result)
+
+            except requests.RequestException:
+                results.append({"original": url, "error": True})
+
+    return jsonify(results=results)
 
 # ===========================================================
 # File based routes for reading data and metadata from disk
