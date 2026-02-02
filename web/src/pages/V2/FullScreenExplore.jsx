@@ -5,7 +5,7 @@ import './Explore.css';
 import { isMobileDevice } from '../../components/Explore/V2/util';
 import { apiService } from '../../lib/apiService';
 
-import FilterActions from '../../components/Explore/V2/FilterActions';
+// FilterActions removed - search is now integrated into TopicTree
 import SubNav from '../../components/SubNav';
 import LeftPane from '../../components/Explore/LeftPane';
 import VisualizationPane from '../../components/Explore/V2/VisualizationPane';
@@ -345,30 +345,28 @@ function ExploreContent() {
           </div>
           <div
             className="filter-table-container"
-            style={{ position: 'relative', overflowX: 'hidden' }}
+            style={{ position: 'relative', overflowX: 'hidden', display: 'flex', flexDirection: 'column' }}
           >
             <div style={styles.dragHandle} onMouseDown={startDragging} />
-            <div ref={filtersContainerRef}>
-              <FilterActions
-                clusterLabels={clusterLabels}
-                scatter={scatter}
-                scope={scope}
-                dataset={dataset}
-              />
-              {/* Topic Tree for hierarchical labels */}
-              {scope?.hierarchical_labels && clusterHierarchy && (
-                <div style={{ maxHeight: '200px', marginTop: '8px', overflow: 'hidden' }}>
-                  <TopicTree onZoomToCluster={handleZoomToCluster} />
-                </div>
-              )}
-            </div>
+            {/* Shared scroll container for TopicTree + TweetFeed */}
             <div
+              ref={filtersContainerRef}
+              className="feed-scroll-container"
               style={{
-                height: tableHeight,
-                overflow: 'hidden',
-                display: 'flex',
+                flex: 1,
+                overflowY: 'auto',
+                overflowX: 'hidden',
+                position: 'relative',
               }}
             >
+              {/* TopicTree - search bar is sticky, topic list scrolls away */}
+              {clusterLabels && clusterLabels.length > 0 && (
+                <TopicTree
+                  onZoomToCluster={handleZoomToCluster}
+                  hoveredCluster={hoveredCluster}
+                />
+              )}
+              {/* TweetFeed - scrolls with topics */}
               <TweetFeed
                 dataset={dataset}
                 distances={searchFilter.distances}
@@ -377,7 +375,6 @@ function ExploreContent() {
                 onHover={handleHover}
                 onClick={handleClicked}
                 hoveredIndex={hoveredIndex}
-                height={filtersHeight > 0 ? window.innerHeight - filtersHeight - 150 : 500}
               />
             </div>
           </div>

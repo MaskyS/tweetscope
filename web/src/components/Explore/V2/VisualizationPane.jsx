@@ -54,7 +54,7 @@ const VisualizationPane = forwardRef(function VisualizationPane({
 }, ref) {
   const { scopeRows, clusterLabels, clusterMap, deletedIndices, scope, features } = useScope();
 
-  const { featureFilter, clusterFilter, shownIndices, filterConfig } = useFilter();
+  const { featureFilter, clusterFilter, shownIndices, filterConfig, filteredIndices } = useFilter();
 
   // only show the hull if we are filtering by cluster
   const showHull = filterConfig?.type === filterConstants.CLUSTER;
@@ -113,32 +113,45 @@ const VisualizationPane = forwardRef(function VisualizationPane({
     return lookup;
   }, [featureIsSelected, dataTableRows, featureFilter.feature, features]);
 
+  const isFilterActive = !!filterConfig;
+  const filteredIndexSet = useMemo(() => new Set(filteredIndices || []), [filteredIndices]);
+
   // Points format: [x, y, selectionKey, activation, cluster]
   const drawingPoints = useMemo(() => {
     return scopeRows.map((p, i) => {
       const cluster = p.cluster ?? 0;
+      const lsIndex = p.ls_index ?? i;
+      const isMatch = isFilterActive ? filteredIndexSet.has(lsIndex) : true;
 
       if (featureIsSelected) {
-        if (shownIndices?.includes(i)) {
-          const activation = featureActivationMap.get(p.ls_index);
-          return activation !== undefined
-            ? [p.x, p.y, mapSelectionKey.selected, activation, cluster]
-            : [p.x, p.y, mapSelectionKey.notSelected, 0.0, cluster];
-        }
-        return [p.x, p.y, mapSelectionKey.notSelected, 0.0, cluster];
+        const activation = featureActivationMap.get(lsIndex);
+        const selectionKey = isMatch ? mapSelectionKey.selected : mapSelectionKey.notSelected;
+        return [
+          p.x,
+          p.y,
+          selectionKey,
+          selectionKey === mapSelectionKey.selected && activation !== undefined ? activation : 0.0,
+          cluster,
+        ];
       }
 
       if (p.deleted) {
         return [-10, -10, mapSelectionKey.hidden, 0.0, cluster];
-      } else if (shownIndices?.includes(i)) {
-        return [p.x, p.y, mapSelectionKey.selected, 0.0, cluster];
-      } else if (shownIndices?.length) {
-        return [p.x, p.y, mapSelectionKey.notSelected, 0.0, cluster];
-      } else {
-        return [p.x, p.y, mapSelectionKey.normal, 0.0, cluster];
       }
+
+      if (isFilterActive) {
+        return [
+          p.x,
+          p.y,
+          isMatch ? mapSelectionKey.selected : mapSelectionKey.notSelected,
+          0.0,
+          cluster,
+        ];
+      }
+
+      return [p.x, p.y, mapSelectionKey.normal, 0.0, cluster];
     });
-  }, [scopeRows, shownIndices, featureActivationMap, featureIsSelected]);
+  }, [scopeRows, featureActivationMap, featureIsSelected, isFilterActive, filteredIndexSet]);
 
   const points = useMemo(() => {
     return scopeRows
@@ -213,18 +226,6 @@ const VisualizationPane = forwardRef(function VisualizationPane({
     pointSize: 1,
     pointOpacity: 1,
   });
-
-  useEffect(() => {
-    if (scopeRows?.length <= 1000) {
-      setVizConfig((prev) => ({ ...prev, pointSize: 2.25 }));
-    } else if (scopeRows?.length <= 10000) {
-      setVizConfig((prev) => ({ ...prev, pointSize: 1.25 }));
-    } else if (scopeRows?.length <= 100000) {
-      setVizConfig((prev) => ({ ...prev, pointSize: 0.75 }));
-    } else {
-      setVizConfig((prev) => ({ ...prev, pointSize: 0.5 }));
-    }
-  }, [scopeRows]);
 
   const toggleShowHeatMap = useCallback(() => {
     setVizConfig((prev) => ({ ...prev, showHeatMap: !prev.showHeatMap }));
@@ -304,6 +305,8 @@ const VisualizationPane = forwardRef(function VisualizationPane({
             points={drawingPoints}
             width={width}
             height={height}
+            pointScale={vizConfig.pointSize}
+            pointOpacity={vizConfig.pointOpacity}
             onView={handleView}
             onSelect={onSelect}
             onHover={onHover}
