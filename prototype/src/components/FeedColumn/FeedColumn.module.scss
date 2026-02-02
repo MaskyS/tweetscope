@@ -1,0 +1,42 @@
+.column {
+  flex: 0 0 auto;
+  scroll-snap-align: center;
+  transition: opacity 0.3s ease-out, transform 0.3s ease-out;
+  margin-right: 32px;
+  height: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  transform-origin: top center;
+
+  &::-webkit-scrollbar {
+    display: none;
+  }
+
+  &:last-child {
+    margin-right: 0;
+  }
+}
+
+.focused {
+  opacity: 1;
+  transform: scale(1.05);
+}
+
+.adjacent {
+  opacity: 0.6;
+  transform: scale(0.92);
+}
+
+.far {
+  opacity: 0.35;
+  transform: scale(0.85);
+}
+
+.tweetList {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-bottom: 32px;
+}
