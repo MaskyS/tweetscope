@@ -5,7 +5,7 @@
    /**
   FONTS
   **/
-  --font-primary: 'Roboto';
+  --font-primary: 'Golos Text', 'Roboto', system-ui, sans-serif;
   --font-secondary: 'Inter';
   --font-backup: 'system-ui';
   /**
@@ -217,7 +217,7 @@
   --copy-button-text-color: #757575;
 
 
-  font-family: Roboto, Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
+  font-family: 'Golos Text', Roboto, Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
   line-height: 1.5;
   font-weight: 400;
 
