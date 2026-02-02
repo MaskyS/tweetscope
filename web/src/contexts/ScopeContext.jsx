@@ -6,6 +6,13 @@ import { saeAvailable } from '../lib/SAE';
 
 const ScopeContext = createContext(null);
 
+function toNumber(value) {
+  if (value === undefined || value === null) return 0;
+  if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
+  const num = Number(String(value).replace(/,/g, ''));
+  return Number.isFinite(num) ? num : 0;
+}
+
 export function ScopeProvider({ children }) {
   const { user: userId, dataset: datasetId, scope: scopeId } = useParams();
 
@@ -148,13 +155,42 @@ export function ScopeProvider({ children }) {
       .filter(label => label.layer === maxLayer || !label.parent_cluster)
       .map(label => labelMap[label.cluster]);
 
-    // Sort children by count (descending)
+    // Compute cumulative likes (and counts) for sorting.
+    const computeCumulativeMetrics = (node) => {
+      let cumulativeLikes = node.likes || 0;
+      let cumulativeCount = node.count || 0;
+
+      if (node.children && node.children.length > 0) {
+        node.children.forEach((child) => {
+          computeCumulativeMetrics(child);
+          cumulativeLikes += child.cumulativeLikes || 0;
+          cumulativeCount += child.cumulativeCount || 0;
+        });
+      }
+
+      node.cumulativeLikes = cumulativeLikes;
+      node.cumulativeCount = cumulativeCount;
+    };
+
+    roots.forEach(computeCumulativeMetrics);
+
+    // Sort children by cumulative likes (descending), then count.
     const sortChildren = (node) => {
       if (node.children && node.children.length > 0) {
-        node.children.sort((a, b) => (b.count || 0) - (a.count || 0));
+        node.children.sort((a, b) => {
+          const likesDiff = (b.cumulativeLikes || 0) - (a.cumulativeLikes || 0);
+          if (likesDiff !== 0) return likesDiff;
+          return (b.cumulativeCount || 0) - (a.cumulativeCount || 0);
+        });
         node.children.forEach(sortChildren);
       }
     };
+
+    roots.sort((a, b) => {
+      const likesDiff = (b.cumulativeLikes || 0) - (a.cumulativeLikes || 0);
+      if (likesDiff !== 0) return likesDiff;
+      return (b.cumulativeCount || 0) - (a.cumulativeCount || 0);
+    });
     roots.forEach(sortChildren);
 
     return {
@@ -184,7 +220,9 @@ export function ScopeProvider({ children }) {
         // TODO: fix this -> use a new object for cluster_labels_lookup
         if (scope.cluster_labels_lookup) {
           scope.cluster_labels_lookup.forEach((cluster) => {
+            if (!cluster) return;
             cluster.count = 0;
+            cluster.likes = 0;
           });
         }
 
@@ -193,6 +231,7 @@ export function ScopeProvider({ children }) {
         const clusterLookupMap = {};
         if (scope.cluster_labels_lookup) {
           scope.cluster_labels_lookup.forEach((c, idx) => {
+            if (!c) return;
             // Support both: cluster field (for hierarchical) and index (for flat)
             clusterLookupMap[c.cluster] = c;
             clusterLookupMap[idx] = c;
@@ -201,7 +240,13 @@ export function ScopeProvider({ children }) {
 
         scopeRows.forEach((d) => {
           const cluster = clusterLookupMap[d.cluster];
-          if (cluster) cluster.count += 1;
+          if (cluster) {
+            cluster.count += 1;
+            const likesValue = toNumber(
+              d.favorites ?? d.favorite_count ?? d.like_count ?? d.likes
+            );
+            cluster.likes += likesValue;
+          }
 
           clusterMap[d.ls_index] = cluster || { cluster: d.cluster, label: d.label || 'Unknown' };
           //   clusterMap[d.ls_index] = { cluster: d.cluster, label: d.label };
