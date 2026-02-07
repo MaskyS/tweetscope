@@ -1,20 +1,31 @@
-import { useCallback, useRef } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 
 const useDebounce = (callback, delay) => {
   const timeoutRef = useRef(null);
 
-  return useCallback(
+  const cancel = useCallback(() => {
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current);
+      timeoutRef.current = null;
+    }
+  }, []);
+
+  const debounced = useCallback(
     (...args) => {
-      if (timeoutRef.current) {
-        clearTimeout(timeoutRef.current);
-      }
+      cancel();
 
       timeoutRef.current = setTimeout(() => {
         callback(...args);
+        timeoutRef.current = null;
       }, delay);
     },
-    [callback, delay]
+    [callback, delay, cancel]
   );
+
+  useEffect(() => cancel, [cancel]);
+
+  debounced.cancel = cancel;
+  return debounced;
 };
 
 export default useDebounce;

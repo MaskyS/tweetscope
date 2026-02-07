@@ -2,39 +2,61 @@ import { useRef, useCallback, useState, useMemo, forwardRef, useImperativeHandle
 import DeckGL from '@deck.gl/react';
 import { ScatterplotLayer, TextLayer, PolygonLayer } from '@deck.gl/layers';
 import { OrthographicView, LinearInterpolator } from '@deck.gl/core';
-import { rgb } from 'd3-color';
+import { CanvasContext } from '@luma.gl/core';
 import PropTypes from 'prop-types';
 
-import {
-  mapSelectionColorsLight,
-  mapSelectionColorsDark,
-  mapSelectionOpacity,
-  mapPointSizeRange,
-  mapSelectionKey,
-} from '@/lib/colors';
+import { mapSelectionKey } from '@/lib/colors';
 import { useColorMode } from '@/hooks/useColorMode';
 import { useScope } from '@/contexts/ScopeContext';
 import styles from './Scatter.module.css';
 
-// Color palette for clusters (similar to datamapplot)
-export const CLUSTER_PALETTE = [
-  [102, 194, 165],  // teal
-  [252, 141, 98],   // coral
-  [141, 160, 203],  // periwinkle
-  [231, 138, 195],  // pink
-  [166, 216, 84],   // lime
-  [255, 217, 47],   // yellow
-  [229, 196, 148],  // tan
-  [179, 179, 179],  // gray
-  [188, 128, 189],  // purple
-  [204, 235, 197],  // mint
-  [255, 170, 170],  // light red
-  [170, 212, 255],  // light blue
-  [255, 212, 170],  // peach
-  [212, 255, 170],  // light lime
-  [212, 170, 255],  // lavender
-  [255, 255, 170],  // cream
+// Work around an occasional luma resize race where CanvasContext can receive a
+// ResizeObserver callback before `device.limits` is fully ready.
+const patchCanvasContextResizeGuard = (() => {
+  let patched = false;
+  return () => {
+    if (patched) return;
+    const proto = CanvasContext?.prototype;
+    const original = proto?.getMaxDrawingBufferSize;
+    if (typeof original !== 'function') {
+      patched = true;
+      return;
+    }
+
+    proto.getMaxDrawingBufferSize = function getMaxDrawingBufferSizeGuarded() {
+      const maxTextureDimension = this?.device?.limits?.maxTextureDimension2D;
+      if (!Number.isFinite(maxTextureDimension) || maxTextureDimension <= 0) {
+        // Conservative fallback that is valid on modern WebGL2 implementations.
+        return [16384, 16384];
+      }
+      return [maxTextureDimension, maxTextureDimension];
+    };
+
+    patched = true;
+  };
+})();
+
+patchCanvasContextResizeGuard();
+
+// Flexoki-inspired cluster ramps:
+// - Light map uses darker accents for stronger contrast on warm paper.
+// - Dark map uses lighter accents for stronger contrast on ink backgrounds.
+const FLEXOKI_CLUSTER_TONES_LIGHT = [
+  [[175, 48, 41], [188, 82, 21], [173, 131, 1], [102, 128, 11], [36, 131, 123], [32, 94, 166], [94, 64, 157], [160, 47, 111]],
+  [[192, 62, 53], [203, 97, 32], [190, 146, 7], [118, 141, 33], [47, 150, 141], [49, 113, 178], [115, 94, 181], [183, 69, 131]],
+  [[148, 40, 34], [157, 67, 16], [142, 107, 1], [83, 105, 7], [28, 108, 102], [26, 79, 140], [79, 54, 133], [135, 40, 94]],
 ];
+
+const FLEXOKI_CLUSTER_TONES_DARK = [
+  [[209, 77, 65], [218, 112, 44], [208, 162, 21], [135, 154, 57], [58, 169, 159], [67, 133, 190], [139, 126, 200], [206, 93, 151]],
+  [[232, 112, 95], [236, 139, 73], [223, 180, 49], [160, 175, 84], [90, 189, 172], [102, 160, 200], [166, 153, 208], [228, 125, 168]],
+  [[248, 154, 138], [249, 174, 119], [236, 203, 96], [190, 201, 126], [135, 211, 195], [146, 191, 219], [196, 185, 224], [244, 164, 194]],
+];
+
+const FLEXOKI_CLUSTER_UNKNOWN_LIGHT = [111, 110, 105];
+const FLEXOKI_CLUSTER_UNKNOWN_DARK = [159, 157, 150];
+
+export const CLUSTER_PALETTE = FLEXOKI_CLUSTER_TONES_LIGHT[0];
 
 // Convert cluster ID (string or number) to a numeric index for color lookup
 const clusterIdToIndex = (clusterId) => {
@@ -46,7 +68,7 @@ const clusterIdToIndex = (clusterId) => {
   // If it's a string like "0_5" (layer_index format), extract the index part
   if (typeof clusterId === 'string') {
     // Handle "unknown" or other special values
-    if (clusterId === 'unknown') return CLUSTER_PALETTE.length - 1; // Use gray (index 7)
+    if (clusterId === 'unknown') return -1;
 
     // Try to extract number from "layer_index" format (e.g., "0_5" -> 5)
     const match = clusterId.match(/_(\d+)$/);
@@ -60,41 +82,57 @@ const clusterIdToIndex = (clusterId) => {
   return 0; // Default fallback
 };
 
-// Get color for a cluster (supports both integer indices and string IDs like "0_5")
-export const getClusterColor = (clusterId, alpha = 180) => {
+const getClusterToneColor = (clusterId, isDarkMode) => {
   const idx = clusterIdToIndex(clusterId);
-  const color = CLUSTER_PALETTE[idx % CLUSTER_PALETTE.length];
+  if (idx < 0 || clusterId === null || clusterId === undefined) {
+    return isDarkMode ? FLEXOKI_CLUSTER_UNKNOWN_DARK : FLEXOKI_CLUSTER_UNKNOWN_LIGHT;
+  }
+
+  const toneTable = isDarkMode ? FLEXOKI_CLUSTER_TONES_DARK : FLEXOKI_CLUSTER_TONES_LIGHT;
+  const hueCount = toneTable[0].length;
+  const toneIdx = Math.floor(Math.abs(idx) / hueCount) % toneTable.length;
+  const hueIdx = Math.abs(idx) % hueCount;
+  return toneTable[toneIdx][hueIdx];
+};
+
+const toRgbaString = (rgbColor, alpha = 1) => {
+  const [r, g, b] = rgbColor;
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+};
+
+export const getClusterColor = (clusterId, alpha = 180, isDarkMode = false) => {
+  const color = getClusterToneColor(clusterId, isDarkMode);
+  return [...color, alpha];
+};
+
+export const getClusterColorRGBA = (clusterId, isDarkMode = false, alpha = 255) => {
+  const color = getClusterToneColor(clusterId, isDarkMode);
   return [...color, alpha];
 };
 
 // Get CSS-friendly rgb string for cluster color
-export const getClusterColorCSS = (clusterId) => {
-  const idx = clusterIdToIndex(clusterId);
-  const color = CLUSTER_PALETTE[idx % CLUSTER_PALETTE.length];
-  return `rgb(${color[0]}, ${color[1]}, ${color[2]})`;
+export const getClusterColorCSS = (clusterId, isDarkMode = false, alpha = 1) => {
+  const color = getClusterToneColor(clusterId, isDarkMode);
+  return toRgbaString(color, alpha);
 };
 
 // PropTypes defined after component (see end of file)
-
-// Convert selection key to color based on theme
-const getPointColor = (selectionKey, isDarkMode, opacity = 1) => {
-  const colors = isDarkMode ? mapSelectionColorsDark : mapSelectionColorsLight;
-  const colorHex = colors[selectionKey] || colors[0];
-  const rgbColor = rgb(colorHex);
-  const baseOpacity = mapSelectionOpacity[selectionKey] || 0.75;
-  return [rgbColor.r, rgbColor.g, rgbColor.b, Math.round(baseOpacity * opacity * 255)];
-};
-
-// Get point radius based on selection state
-const getPointRadius = (selectionKey) => {
-  return mapPointSizeRange[selectionKey] || mapPointSizeRange[0];
-};
 
 function toNumber(value) {
   if (value === undefined || value === null) return 0;
   if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
   const num = Number(String(value).replace(/,/g, ''));
   return Number.isFinite(num) ? num : 0;
+}
+
+function engagementScoreFromRow(row) {
+  const favorites = toNumber(row?.favorites ?? row?.favorite_count ?? row?.likes ?? row?.like_count);
+  const retweets = toNumber(row?.retweets ?? row?.retweet_count);
+  const replies = toNumber(row?.replies ?? row?.reply_count);
+
+  // Blend interactions so engagement is not dominated by one field and
+  // retweets/replies still matter when favorites is present.
+  return favorites + retweets * 0.7 + replies * 0.45;
 }
 
 function clamp(num, min, max) {
@@ -226,6 +264,17 @@ function quantileSorted(sortedValues, q) {
   return sortedValues[base];
 }
 
+function upperBound(sortedValues, value) {
+  let lo = 0;
+  let hi = sortedValues.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (sortedValues[mid] <= value) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+
 function calculateBaseRadius(pointCount) {
   if (!pointCount) return 1.2;
   const value = 2.3 * Math.pow(5000 / pointCount, 0.25);
@@ -242,6 +291,7 @@ const DeckGLScatter = forwardRef(function DeckGLScatter({
   points,
   width,
   height,
+  contentPaddingRight = 0,
   pointScale = 1,
   pointOpacity = 1,
   minZoom = -2,
@@ -249,10 +299,17 @@ const DeckGLScatter = forwardRef(function DeckGLScatter({
   onView,
   onSelect,
   onHover,
+  onLabelClick,
+  showClusterOutlines = true,
+  activeClusterId = null,
   featureIsSelected = false,
 }, ref) {
   const { isDark: isDarkMode } = useColorMode();
   const { clusterLabels, scope, scopeRows } = useScope();
+  const devicePixelRatio = useMemo(() => {
+    if (typeof window === 'undefined') return 1;
+    return Math.min(window.devicePixelRatio || 1, 2);
+  }, []);
 
   const deckRef = useRef(null);
   const [hoveredPointIndex, setHoveredPointIndex] = useState(null);
@@ -260,24 +317,29 @@ const DeckGLScatter = forwardRef(function DeckGLScatter({
   // Controlled view state for programmatic zoom
   const [controlledViewState, setControlledViewState] = useState(null);
 
-  // Calculate the initial zoom level to fit the data range [-1, 1] in the viewport
-  // OrthographicView: zoom=0 means 1 unit = 1 pixel
-  // We want 2 units to fit in min(width, height) * 0.9 (with some padding)
+  // Calculate the initial zoom level to fit the data range [-1, 1] in the viewport.
+  // When contentPaddingRight > 0, frame data within the unoccluded visible area
+  // (left of the sidebar overlay). Once the user pans/zooms, initialViewState is
+  // no longer used by @deck.gl/react, so content can freely go behind the sidebar.
   const initialZoom = useMemo(() => {
-    const fitSize = Math.min(width, height) * 0.45; // 90% of smaller dimension, divided by 2 for half
-    // 2^zoom * dataRange = screenSize
-    // zoom = log2(screenSize / dataRange)
-    // dataRange is 2 (from -1 to 1)
+    const visibleWidth = Math.max(320, width - contentPaddingRight);
+    const fitSize = Math.min(visibleWidth, height) * 0.45;
     return clamp(Math.log2(fitSize), minZoom, maxZoom);
-  }, [width, height, minZoom, maxZoom]);
+  }, [width, height, contentPaddingRight, minZoom, maxZoom]);
 
-  // Initial view state - use initialViewState pattern
-  const initialViewState = useMemo(() => ({
-    target: [0, 0, 0],
-    zoom: initialZoom,
-    minZoom: minZoom,
-    maxZoom: maxZoom,
-  }), [initialZoom, minZoom, maxZoom]);
+  // Shift the initial target so data is centered in the visible area (left of sidebar).
+  // In OrthographicView, target maps to the canvas center. We offset target.x rightward
+  // in data-space so that the data origin [0,0] appears at the visible-area center instead.
+  const initialViewState = useMemo(() => {
+    const scale = Math.pow(2, initialZoom);
+    const targetOffsetX = contentPaddingRight > 0 ? contentPaddingRight / (2 * scale) : 0;
+    return {
+      target: [targetOffsetX, 0, 0],
+      zoom: initialZoom,
+      minZoom: minZoom,
+      maxZoom: maxZoom,
+    };
+  }, [initialZoom, contentPaddingRight, minZoom, maxZoom]);
 
   // Track current view state for label filtering
   const [currentViewState, setCurrentViewState] = useState(initialViewState);
@@ -308,17 +370,17 @@ const DeckGLScatter = forwardRef(function DeckGLScatter({
         transitionInterpolator: new LinearInterpolator(['target', 'zoom']),
       });
     },
-    getViewState: () => controlledViewState,
+    getViewState: () => controlledViewState ?? currentViewState,
   }), [width, height, minZoom, maxZoom, controlledViewState]);
 
   const pointCount = points.length;
 
-  // Compute normalized "importance" from likes (heavy-tailed, so log-scale + winsorize).
+    // Compute normalized "importance" from engagement (heavy-tailed, so log-scale + winsorize).
   // We sample when very large to avoid sorting huge arrays.
   const pointRadii = useMemo(() => {
-    const baseRadius = calculateBaseRadius(pointCount) * pointScale;
-    const minRadius = 0.6;
-    const maxRadius = 6;
+    const baseRadius = calculateBaseRadius(pointCount);
+    const minRadius = 0.5;
+    const maxRadius = 20.0;
 
     const radii = new Float32Array(pointCount);
     if (!scopeRows || scopeRows.length === 0) {
@@ -327,17 +389,15 @@ const DeckGLScatter = forwardRef(function DeckGLScatter({
     }
 
     const rawImportance = new Float32Array(pointCount);
-    let hasAnyLikes = false;
+    let hasAnyEngagement = false;
     for (let i = 0; i < pointCount; i++) {
       const row = scopeRows[i] || {};
-      const likes = toNumber(
-        row.favorites ?? row.favorite_count ?? row.like_count ?? row.likes ?? row.retweets ?? 0
-      );
-      if (likes > 0) hasAnyLikes = true;
-      rawImportance[i] = Math.log1p(Math.max(0, likes));
+      const engagement = engagementScoreFromRow(row);
+      if (engagement > 0) hasAnyEngagement = true;
+      rawImportance[i] = Math.log1p(Math.max(0, engagement));
     }
 
-    if (!hasAnyLikes) {
+    if (!hasAnyEngagement) {
       radii.fill(clamp(baseRadius, minRadius, maxRadius));
       return radii;
     }
@@ -350,27 +410,40 @@ const DeckGLScatter = forwardRef(function DeckGLScatter({
     }
     sample.sort((a, b) => a - b);
 
-    const pLow = quantileSorted(sample, 0.05);
-    const pHigh = quantileSorted(sample, 0.95);
+    const pLow = quantileSorted(sample, 0.03);
+    const pHigh = quantileSorted(sample, 0.97);
     const denom = pHigh > pLow ? pHigh - pLow : 1;
 
     for (let i = 0; i < pointCount; i++) {
-      const clampedImp = clamp(rawImportance[i], pLow, pHigh);
-      const imp01 = pHigh > pLow ? (clampedImp - pLow) / denom : 0;
-      const importanceFactor = 0.8 + imp01 * 1.2; // 0.8x .. 2.0x
+      const imp = rawImportance[i];
+      const clampedImp = clamp(imp, pLow, pHigh);
+      const mag01 = (clampedImp - pLow) / denom;
+
+      // Percentile term guarantees visible spread even when absolute values are narrow.
+      const rank = upperBound(sample, imp);
+      const pct = sample.length > 1 ? rank / (sample.length - 1) : 0;
+      const pctCurve = Math.pow(clamp(pct, 0, 1), 1.35);
+      const tailPct = clamp((pct - 0.9) / 0.1, 0, 1);
+
+      let importanceFactor = 0.55;
+      importanceFactor += Math.pow(clamp(mag01, 0, 1), 0.8) * 1.6;
+      importanceFactor += pctCurve * 2.2;
+      importanceFactor += Math.pow(tailPct, 1.1) * 2.4;
+      importanceFactor = clamp(importanceFactor, 0.55, 7.0);
+
       radii[i] = clamp(baseRadius * importanceFactor, minRadius, maxRadius);
     }
 
     return radii;
-  }, [scopeRows, pointCount, pointScale]);
+  }, [scopeRows, pointCount]);
 
   const alphaScale = useMemo(() => {
     const base = calculateBaseAlpha(pointCount) * pointOpacity;
     const baseAlpha = clamp(Math.round(base), 10, 255);
     return {
       baseAlpha,
-      selectedAlpha: clamp(baseAlpha + 80, 20, 255),
-      dimAlpha: clamp(Math.round(baseAlpha * 0.12), 0, 80),
+      selectedAlpha: clamp(baseAlpha + 64, 20, 255),
+      dimAlpha: clamp(Math.round(baseAlpha * 0.28), 18, 120),
     };
   }, [pointCount, pointOpacity]);
 
@@ -478,9 +551,9 @@ const DeckGLScatter = forwardRef(function DeckGLScatter({
     const measureCtx = textMeasureContext;
     const widthCache = textWidthCacheRef.current;
 
-    const fontFamily = 'Golos Text, Inter, system-ui, -apple-system, sans-serif';
+    const fontFamily = 'Instrument Serif, Georgia, serif';
     const fontWeight = '700';
-    const backgroundPadding = [12, 8, 12, 8]; // left, top, right, bottom (px)
+    const backgroundPadding = [8, 5, 8, 5]; // left, top, right, bottom (px)
     const collisionMargin = 2; // extra spacing between labels (px)
     const widthInflate = 1.12;
     const lineHeight = 1.1;
@@ -593,7 +666,7 @@ const DeckGLScatter = forwardRef(function DeckGLScatter({
       // Fade labels as they get further from the current view center (less visually noisy on the periphery).
       const distanceFade = clamp(1 - Math.pow(dist01, 1.5) * 0.75, 0.35, 1);
       const baseTextAlpha = Math.round(230 * distanceFade);
-      const baseBgAlpha = Math.round(128 * distanceFade);
+      const baseBgAlpha = clamp(Math.round(84 * distanceFade), 28, 92);
 
       // Slightly shrink labels on the periphery to reduce overlap pressure (still mostly driven by cluster size).
       const distanceSizeScale = 1 - dist01 * 0.12; // down to ~0.88 at edges
@@ -668,7 +741,7 @@ const DeckGLScatter = forwardRef(function DeckGLScatter({
               baseTextAlpha
             );
             const softBgAlpha = clamp(
-              Math.round((baseBgAlpha * 0.25) / (1 + intersections * 0.5)),
+              Math.round((baseBgAlpha * 0.22) / (1 + intersections * 0.5)),
               0,
               baseBgAlpha
             );
@@ -778,7 +851,12 @@ const DeckGLScatter = forwardRef(function DeckGLScatter({
     if (info.object && info.layer?.id === 'scatter-layer') {
       setHoveredPointIndex(info.object.index);
       if (onHover) {
-        onHover(info.object.ls_index);
+        onHover({
+          index: info.object.ls_index,
+          x: info.x,
+          y: info.y,
+          source: 'scatter',
+        });
       }
     } else {
       setHoveredPointIndex(null);
@@ -788,12 +866,104 @@ const DeckGLScatter = forwardRef(function DeckGLScatter({
     }
   }, [onHover]);
 
+  const labelHitRegions = useMemo(() => {
+    if (!placedLabels.length) return [];
+
+    const viewState = controlledViewState || currentViewState || initialViewState;
+    const zoom = viewState?.zoom ?? initialZoom;
+    const target = viewState?.target ?? [0, 0, 0];
+    const [targetX, targetY] = target;
+    const scale = Math.pow(2, zoom);
+    const measureCtx = textMeasureContext;
+    const widthCache = textWidthCacheRef.current;
+    const fontFamily = 'Instrument Serif, Georgia, serif';
+    const fontWeight = '700';
+    const lineHeight = 1.1;
+    const backgroundPadding = [8, 5, 8, 5];
+    const widthInflate = 1.12;
+
+    const measureTextWidth = (text, sizePx) => {
+      const clean = String(text || '');
+      const fontSize = Math.max(1, Math.round(sizePx));
+      const font = `${fontWeight} ${fontSize}px ${fontFamily}`;
+      const key = `${font}|${clean}`;
+      const cached = widthCache.get(key);
+      if (cached !== undefined) return cached;
+      if (!measureCtx) return clean.length * fontSize * 0.6;
+      measureCtx.font = font;
+      const measured = measureCtx.measureText(clean).width;
+      widthCache.set(key, measured);
+      return measured;
+    };
+
+    const projectToScreen = (position) => {
+      const x = (position[0] - targetX) * scale + width / 2;
+      const y = (targetY - position[1]) * scale + height / 2;
+      return [x, y];
+    };
+
+    return placedLabels.map((d) => {
+      const lines = String(d.label || '').split('\n').filter(Boolean);
+      const sizePx = clamp(d.sizePx || 14, 8, 24);
+      let maxLineWidth = 0;
+      for (const line of lines) {
+        maxLineWidth = Math.max(maxLineWidth, measureTextWidth(line, sizePx));
+      }
+      const textWidth = maxLineWidth * widthInflate;
+      const textHeight = lines.length * sizePx * lineHeight;
+      const [sx, sy] = projectToScreen(d.position);
+      const x0 = sx - textWidth / 2 - backgroundPadding[0];
+      const x1 = sx + textWidth / 2 + backgroundPadding[2];
+      const y0 = sy - textHeight / 2 - backgroundPadding[1];
+      const y1 = sy + textHeight / 2 + backgroundPadding[3];
+
+      return { ...d, x0, x1, y0, y1, sx, sy };
+    });
+  }, [
+    placedLabels,
+    controlledViewState,
+    currentViewState,
+    initialViewState,
+    initialZoom,
+    textMeasureContext,
+    width,
+    height,
+  ]);
+
+  const pickLabelFromScreen = useCallback((x, y) => {
+    if (!Number.isFinite(x) || !Number.isFinite(y) || !labelHitRegions.length) return null;
+
+    let best = null;
+    for (const region of labelHitRegions) {
+      if (x < region.x0 || x > region.x1 || y < region.y0 || y > region.y1) continue;
+      const dx = x - region.sx;
+      const dy = y - region.sy;
+      const dist2 = dx * dx + dy * dy;
+      if (!best || dist2 < best.dist2) {
+        best = { region, dist2 };
+      }
+    }
+
+    return best?.region || null;
+  }, [labelHitRegions]);
+
   // Handle click/select events
   const handleClick = useCallback((info) => {
     if (info.object && info.layer?.id === 'scatter-layer' && onSelect) {
       onSelect([info.object.ls_index]);
+      return;
     }
-  }, [onSelect]);
+
+    const labelHit = pickLabelFromScreen(info?.x, info?.y);
+    if (labelHit && onLabelClick) {
+      onLabelClick({ cluster: labelHit.cluster, label: labelHit.fullLabel || labelHit.label });
+      return;
+    }
+
+    if (onSelect) {
+      onSelect([]);
+    }
+  }, [onSelect, onLabelClick, pickLabelFromScreen]);
 
   // Create layers
   const layers = useMemo(() => {
@@ -810,9 +980,9 @@ const DeckGLScatter = forwardRef(function DeckGLScatter({
         filled: true,
         // Use pixel units so point size is stable on screen and not tied to zoom.
         radiusUnits: 'pixels',
-        radiusScale: 1,
+        radiusScale: pointScale,
         radiusMinPixels: 0,
-        radiusMaxPixels: 10,
+        radiusMaxPixels: 36,
         lineWidthUnits: 'pixels',
         lineWidthScale: 1,
         lineWidthMinPixels: 0,
@@ -820,12 +990,18 @@ const DeckGLScatter = forwardRef(function DeckGLScatter({
         getPosition: d => d.position,
         getRadius: d => {
           const isHovered = d.index === hoveredPointIndex;
-          const r = pointRadii[d.index] || 1.2;
-          return isHovered ? clamp(r + 2, 0.6, 10) : r;
+          let r = pointRadii[d.index] || 1.2;
+
+          if (featureIsSelected && d.selectionKey === mapSelectionKey.selected && d.activation > 0) {
+            const activationBoost = 1 + Math.pow(clamp(d.activation, 0, 1), 0.65) * 1.35;
+            r = clamp(r * activationBoost, 0.45, 28.0);
+          }
+
+          return isHovered ? clamp(r + 2, 0.6, 34.0) : r;
         },
         getFillColor: d => {
           const isHovered = d.index === hoveredPointIndex;
-          const clusterColor = getClusterColor(d.cluster, 255);
+          const clusterColor = getClusterColor(d.cluster, 255, isDarkMode);
 
           let alpha = alphaScale.baseAlpha;
           if (d.selectionKey === mapSelectionKey.hidden) {
@@ -848,12 +1024,11 @@ const DeckGLScatter = forwardRef(function DeckGLScatter({
         getLineColor: d => {
           const isHovered = d.index === hoveredPointIndex;
           if (!isHovered) return [0, 0, 0, 0];
-          // Hover halo color
-          return [139, 207, 102, 255]; // #8bcf66
+          return isDarkMode ? [242, 240, 229, 240] : [16, 15, 15, 230];
         },
         getLineWidth: d => (d.index === hoveredPointIndex ? 2 : 0),
         updateTriggers: {
-          getRadius: [hoveredPointIndex, pointRadii],
+          getRadius: [hoveredPointIndex, pointRadii, featureIsSelected],
           getFillColor: [hoveredPointIndex, featureIsSelected, alphaScale],
           getLineColor: [hoveredPointIndex],
           getLineWidth: [hoveredPointIndex],
@@ -862,7 +1037,7 @@ const DeckGLScatter = forwardRef(function DeckGLScatter({
     );
 
     // 2. Polygon Layer for cluster hulls
-    if (hullData.length > 0) {
+    if (showClusterOutlines && hullData.length > 0) {
       layerList.push(
         new PolygonLayer({
           id: 'hull-layer',
@@ -871,7 +1046,7 @@ const DeckGLScatter = forwardRef(function DeckGLScatter({
           stroked: true,
           filled: false,
           getPolygon: d => d.polygon,
-          getLineColor: isDarkMode ? [224, 239, 255, 80] : [212, 178, 151, 120],
+          getLineColor: isDarkMode ? [218, 216, 206, 72] : [111, 110, 105, 74],
           lineWidthMinPixels: 1,
           lineWidthMaxPixels: 3,
         })
@@ -884,19 +1059,33 @@ const DeckGLScatter = forwardRef(function DeckGLScatter({
         new TextLayer({
           id: 'label-layer',
           data: placedLabels,
-          pickable: true,
+          pickable: false,
           getPosition: d => d.position,
           getText: d => d.label,
           characterSet: labelCharacterSet,
           // Use pixels for stable label sizing. We handle overlap in JS and truncate as needed.
           sizeUnits: 'pixels',
-          getSize: d => d.sizePx || 14,
+          getSize: d => {
+            const isActive =
+              activeClusterId !== null &&
+              activeClusterId !== undefined &&
+              String(d?.cluster) === String(activeClusterId);
+            const baseSize = d.sizePx || 14;
+            return isActive ? clamp(baseSize + 1.25, 9, 24) : baseSize;
+          },
           getColor: d => {
+            const isActive =
+              activeClusterId !== null &&
+              activeClusterId !== undefined &&
+              String(d?.cluster) === String(activeClusterId);
             const alpha = Number.isFinite(d?.alpha) ? d.alpha : 230;
+            if (isActive) {
+              return isDarkMode ? [255, 255, 255, 255] : [16, 15, 15, 255];
+            }
             return isDarkMode ? [255, 255, 255, alpha] : [40, 40, 40, alpha];
           },
           getAngle: 0,
-          fontFamily: 'Golos Text, Inter, system-ui, -apple-system, sans-serif',
+          fontFamily: 'Instrument Serif, Georgia, serif',
           fontWeight: 'bold',
           // Enable SDF rendering for text outlines
           fontSettings: { sdf: true },
@@ -906,18 +1095,29 @@ const DeckGLScatter = forwardRef(function DeckGLScatter({
           // Background for better readability (like datamapplot)
           background: true,
           getBackgroundColor: d => {
-            const alpha = Number.isFinite(d?.backgroundAlpha) ? d.backgroundAlpha : 128;
-            return isDarkMode ? [17, 17, 17, alpha] : [255, 255, 255, alpha];
+            const isActive =
+              activeClusterId !== null &&
+              activeClusterId !== undefined &&
+              String(d?.cluster) === String(activeClusterId);
+            const alpha = Number.isFinite(d?.backgroundAlpha) ? d.backgroundAlpha : 64;
+            if (isActive) {
+              const [r, g, b] = getClusterToneColor(d.cluster, isDarkMode);
+              const activeAlpha = isDarkMode ? clamp(alpha + 46, 92, 168) : clamp(alpha + 34, 82, 144);
+              return [r, g, b, activeAlpha];
+            }
+            return isDarkMode ? [52, 51, 49, alpha] : [230, 228, 217, alpha];
           },
-          backgroundPadding: [12, 8, 12, 8],
-          outlineWidth: 2,
-          outlineColor: isDarkMode ? [17, 17, 17, 220] : [255, 255, 255, 220],
+          backgroundPadding: [8, 5, 8, 5],
+          // Keep SDF edge support but avoid bright halos around labels.
+          outlineWidth: 0.55,
+          outlineColor: isDarkMode ? [28, 27, 26, 150] : [159, 157, 150, 118],
           sizeMinPixels: 8,
           sizeMaxPixels: 24,
           billboard: true,
           updateTriggers: {
-            getColor: [isDarkMode],
-            getBackgroundColor: [isDarkMode],
+            getSize: [activeClusterId],
+            getColor: [isDarkMode, activeClusterId],
+            getBackgroundColor: [isDarkMode, activeClusterId],
           },
         })
       );
@@ -934,6 +1134,9 @@ const DeckGLScatter = forwardRef(function DeckGLScatter({
     featureIsSelected,
     pointRadii,
     alphaScale,
+    onLabelClick,
+    showClusterOutlines,
+    activeClusterId,
   ]);
 
   // OrthographicView for 2D scatter plot
@@ -970,8 +1173,9 @@ const DeckGLScatter = forwardRef(function DeckGLScatter({
         width={width}
         height={height}
         style={{
-          background: isDarkMode ? '#111111' : '#fafafa',
+          background: 'var(--viz-map-background, #fffcf0)',
         }}
+        useDevicePixels={devicePixelRatio}
         getCursor={({ isHovering }) => isHovering ? 'pointer' : 'grab'}
       />
     </div>
@@ -982,12 +1186,16 @@ DeckGLScatter.propTypes = {
   points: PropTypes.array.isRequired, // an array of [x, y, selectionKey, activation, cluster]
   width: PropTypes.number.isRequired,
   height: PropTypes.number.isRequired,
+  contentPaddingRight: PropTypes.number,
   maxZoom: PropTypes.number,
   pointScale: PropTypes.number,
   pointOpacity: PropTypes.number,
   onView: PropTypes.func,
   onSelect: PropTypes.func,
   onHover: PropTypes.func,
+  onLabelClick: PropTypes.func,
+  showClusterOutlines: PropTypes.bool,
+  activeClusterId: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
   featureIsSelected: PropTypes.bool,
 };
 
