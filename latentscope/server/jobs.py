@@ -290,6 +290,9 @@ def run_import_twitter():
         command_parts.append("--exclude_replies")
     if request.form.get("exclude_retweets", "").lower() in ("1", "true", "yes", "on"):
         command_parts.append("--exclude_retweets")
+    include_likes = request.form.get("include_likes", "true").lower() in ("1", "true", "yes", "on")
+    if not include_likes:
+        command_parts.append("--exclude_likes")
 
     run_pipeline = request.form.get("run_pipeline", "true").lower() in ("1", "true", "yes", "on")
     if run_pipeline:

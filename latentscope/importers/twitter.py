@@ -119,12 +119,21 @@ def _flatten_tweet(
         expanded = url.get("expanded_url")
         if expanded:
             urls.append(expanded)
+    # Fallback: community archive flat format has top-level `urls` list
+    if not urls:
+        flat_urls = t.get("urls")
+        if isinstance(flat_urls, list):
+            urls = [u for u in flat_urls if isinstance(u, str) and u]
 
     media_urls = []
     for media in t.get("extended_entities", {}).get("media", []) or []:
         media_url = media.get("media_url_https") or media.get("media_url")
         if media_url:
             media_urls.append(media_url)
+    if not media_urls:
+        flat_media = t.get("media_urls")
+        if isinstance(flat_media, list):
+            media_urls = [u for u in flat_media if isinstance(u, str) and u]
 
     is_reply = bool(t.get("in_reply_to_status_id_str") or t.get("in_reply_to_status_id"))
     is_retweet = bool(t.get("retweeted_status")) or str(text).startswith("RT @")
@@ -395,6 +404,7 @@ def load_community_extracted_json(path: str) -> ImportResult:
 def apply_filters(
     rows: list[dict[str, Any]],
     *,
+    include_likes: bool = True,
     year: int | None = None,
     lang: str | None = None,
     min_favorites: int = 0,
@@ -408,6 +418,8 @@ def apply_filters(
     result: list[dict[str, Any]] = []
 
     for row in rows:
+        if not include_likes and row.get("tweet_type") == "like":
+            continue
         text = row.get("text") or ""
         if min_text_length and len(text) < min_text_length:
             continue

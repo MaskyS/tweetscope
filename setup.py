@@ -96,6 +96,7 @@ setup(
             'ls-download-dataset=latentscope.scripts.download_dataset:main',
             'ls-upload-dataset=latentscope.scripts.upload_dataset:main',
             'ls-twitter-import=latentscope.scripts.twitter_import:main',
+            'ls-build-links-graph=latentscope.scripts.build_links_graph:main',
         ],
     },
     include_package_data=True,
