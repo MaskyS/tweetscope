@@ -5,7 +5,7 @@ table.datatable {
 }
 
 .datatable th, .datatable td {
-  border: 1px solid #ddd;
+  border: 1px solid #DAD8CE;
   padding: 8px;
   text-align: left;
   word-wrap: break-word; /* Break long words */
@@ -13,7 +13,7 @@ table.datatable {
 }
 
 .datatable th {
-  background-color: #f4f4f4;
+  background-color: #F2F0E5;
 }
 
 .datatable .tag-active {
@@ -28,14 +28,26 @@ table.datatable {
 
 @media (prefers-color-scheme: dark) {
   .datatable th {
-    background-color: #141414;
+    background-color: #100F0F;
   }
 
   .datatable .tag-active {
-    background-color: #111;
-    border: 1px solid gray;
+    background-color: #1C1B1A;
+    border: 1px solid #6F6E69;
   }
   .datatable .tag-inactive {
-    background-color: #333;
+    background-color: #343331;
   }
+}
+
+[data-theme="dark"] .datatable th {
+  background-color: #100F0F;
+}
+
+[data-theme="dark"] .datatable .tag-active {
+  background-color: #1C1B1A;
+  border: 1px solid #6F6E69;
+}
+[data-theme="dark"] .datatable .tag-inactive {
+  background-color: #343331;
 }

@@ -98,8 +98,8 @@ function FeatureModal({
               className="feature-modal-item-background"
               style={{
                 width: getWidth(topActs[i]),
-                borderBottom: hoveredIdx === i ? '2px solid #b87333' : 'none',
-                backgroundColor: hoveredIdx === i ? '#b87333' : '#aaa',
+                borderBottom: hoveredIdx === i ? '2px solid #1C6C66' : 'none',
+                backgroundColor: hoveredIdx === i ? '#1C6C66' : '#878580',
               }}
             />
             <div className="feature-label">
@@ -196,24 +196,24 @@ function FeaturePlot({
       // Set line style based on hover/feature state
       if (hoveredIdx !== null) {
         if (idx === hoveredIdx) {
-          ctx.strokeStyle = '#b87333';
+          ctx.strokeStyle = '#1C6C66';
           ctx.lineWidth = 2;
           ctx.globalAlpha = 0.8;
         } else {
-          ctx.strokeStyle = '#ccc';
+          ctx.strokeStyle = '#CECDC3';
           ctx.lineWidth = 2;
           ctx.globalAlpha = 0.25;
         }
       } else if (feature === -1) {
-        ctx.strokeStyle = '#b87333';
+        ctx.strokeStyle = '#1C6C66';
         ctx.lineWidth = 2;
         ctx.globalAlpha = 0.8;
       } else if (feat_idx === feature) {
-        ctx.strokeStyle = '#b87333';
+        ctx.strokeStyle = '#1C6C66';
         ctx.lineWidth = 2;
         ctx.globalAlpha = 0.8;
       } else {
-        ctx.strokeStyle = '#f5f5f5';
+        ctx.strokeStyle = '#F2F0E5';
         ctx.lineWidth = 2;
         ctx.globalAlpha = 0.5;
       }
@@ -224,7 +224,7 @@ function FeaturePlot({
     // Draw ticks
     if (showTicks) {
       ctx.font = '8px sans-serif';
-      ctx.fillStyle = '#666';
+      ctx.fillStyle = '#6F6E69';
       ctx.textAlign = 'center';
 
       extent(activations).forEach((tick) => {
@@ -572,7 +572,7 @@ function FilterDataTable({
             zIndex: 9999,
             maxWidth: 'none',
             whiteSpace: 'nowrap',
-            backgroundColor: '#D3965E',
+            backgroundColor: '#3AA99F',
             position: 'fixed',
             marginTop: 10,
             top: -200,

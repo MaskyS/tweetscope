@@ -8,7 +8,7 @@ import { apiUrl, apiService } from '../lib/apiService';
 import { extractTwitterArchiveForImport } from '../lib/twitterArchiveParser';
 const readonly = import.meta.env.MODE == 'read_only';
 
-import './Home.css';
+import styles from './Home.module.scss';
 
 function Home({ appConfig = null }) {
   const features = appConfig?.features || {};
@@ -59,6 +59,7 @@ function Home({ appConfig = null }) {
   const [twitterArchiveFile, setTwitterArchiveFile] = useState(null);
   const [twitterArchiveDatasetName, setTwitterArchiveDatasetName] = useState('');
   const [twitterArchiveYear, setTwitterArchiveYear] = useState('');
+  const [twitterArchiveIncludeLikes, setTwitterArchiveIncludeLikes] = useState(true);
   const [processArchiveLocally, setProcessArchiveLocally] = useState(true);
   const [twitterArchiveExtracting, setTwitterArchiveExtracting] = useState(false);
   const [localExtractedRecordCount, setLocalExtractedRecordCount] = useState(null);
@@ -87,13 +88,22 @@ function Home({ appConfig = null }) {
       const formData = new FormData();
       formData.append('dataset', twitterArchiveDatasetName);
       formData.append('run_pipeline', 'true');
+      formData.append('include_likes', twitterArchiveIncludeLikes ? 'true' : 'false');
       if (twitterArchiveYear) {
         formData.append('year', twitterArchiveYear);
       }
       try {
         if (processArchiveLocally) {
           setTwitterArchiveExtracting(true);
-          const extracted = await extractTwitterArchiveForImport(twitterArchiveFile);
+          const extractedRaw = await extractTwitterArchiveForImport(twitterArchiveFile);
+          const extracted = twitterArchiveIncludeLikes
+            ? extractedRaw
+            : {
+                ...extractedRaw,
+                likes: [],
+                likes_count: 0,
+                total_count: extractedRaw?.tweet_count || extractedRaw?.tweets?.length || 0,
+              };
           const recordCount =
             extracted?.total_count ||
             (extracted?.tweet_count || extracted?.tweets?.length || 0) +
@@ -126,6 +136,7 @@ function Home({ appConfig = null }) {
       twitterArchiveFile,
       twitterArchiveDatasetName,
       twitterArchiveYear,
+      twitterArchiveIncludeLikes,
       parseApiResponse,
       processArchiveLocally,
     ]
@@ -190,139 +201,219 @@ function Home({ appConfig = null }) {
   const communityNameTaken = datasets.some((dataset) => dataset.id === communityDatasetName);
 
   return (
-    <div className="home">
+    <div className={styles.home}>
+      {/* Hero Header */}
+      <div className={styles.hero}>
+        <h1 className={styles.heroTitle}>Knowledge Explorer</h1>
+        <p className={styles.heroSubtitle}>Import your X archive and explore your data as an interactive knowledge map</p>
+      </div>
+
+      {/* Import Cards */}
       {readonly || !canTwitterImport ? null : (
-        <div className="new section">
-          <div className="new-dataset">
-            <form onSubmit={submitTwitterArchiveImport}>
-              <h3>Import native X archive</h3>
-              <label htmlFor="twitter-archive-upload">
-                <span>Upload your X export zip and auto-build your knowledge index</span>
-              </label>
-              {maxUploadMb ? <span>Upload limit: {maxUploadMb} MB</span> : null}
-              <label htmlFor="twitter-local-parse">
-                <input
-                  id="twitter-local-parse"
-                  type="checkbox"
-                  checked={processArchiveLocally}
-                  onChange={(e) => setProcessArchiveLocally(e.target.checked)}
+        <>
+          <div className={styles.importRow}>
+            {/* Native Archive Import */}
+            <div className={styles.glassCard}>
+              <form onSubmit={submitTwitterArchiveImport} className={styles.cardForm}>
+                <h3 className={styles.cardTitle}>Import native X archive</h3>
+                <p className={styles.cardDescription}>
+                  Upload your X export zip and auto-build your knowledge index
+                </p>
+
+                {maxUploadMb ? <span className={styles.uploadLimit}>Upload limit: {maxUploadMb} MB</span> : null}
+
+                {/* Privacy mode checkbox */}
+                <label className={styles.checkboxRow} htmlFor="twitter-local-parse">
+                  <input
+                    id="twitter-local-parse"
+                    type="checkbox"
+                    checked={processArchiveLocally}
+                    onChange={(e) => setProcessArchiveLocally(e.target.checked)}
+                  />
+                  <div>
+                    <div className={styles.checkboxLabel}>Process archive locally in browser (privacy mode)</div>
+                    {processArchiveLocally ? (
+                      <div className={styles.checkboxHint}>Uploads extracted tweet JSON instead of raw zip.</div>
+                    ) : null}
+                  </div>
+                </label>
+                <label className={styles.checkboxRow} htmlFor="twitter-include-likes">
+                  <input
+                    id="twitter-include-likes"
+                    type="checkbox"
+                    checked={twitterArchiveIncludeLikes}
+                    onChange={(e) => setTwitterArchiveIncludeLikes(e.target.checked)}
+                  />
+                  <div>
+                    <div className={styles.checkboxLabel}>Include likes in import</div>
+                    {!twitterArchiveIncludeLikes && processArchiveLocally ? (
+                      <div className={styles.checkboxHint}>
+                        Likes are stripped client-side before upload in privacy mode.
+                      </div>
+                    ) : null}
+                  </div>
+                </label>
+
+                {/* Styled file drop zone */}
+                <label htmlFor="twitter-archive-upload" className={styles.dropZone}>
+                  <input
+                    id="twitter-archive-upload"
+                    className={styles.hiddenInput}
+                    type="file"
+                    accept=".zip"
+                    onChange={handleTwitterArchiveSelected}
+                  />
+                  <span className={styles.dropZoneIcon}>&#128230;</span>
+                  {twitterArchiveFile ? (
+                    <span className={styles.dropZoneFileName}>{twitterArchiveFile.name}</span>
+                  ) : (
+                    <span className={styles.dropZoneText}>Click to select your .zip archive</span>
+                  )}
+                </label>
+
+                <Input
+                  id="twitter-archive-dataset-name"
+                  type="text"
+                  placeholder="Dataset name"
+                  value={twitterArchiveDatasetName}
+                  onChange={(e) => setTwitterArchiveDatasetName(e.target.value)}
                 />
-                <span>Process archive locally in browser before upload (privacy mode)</span>
-              </label>
-              {processArchiveLocally ? <span>Uploads extracted tweet JSON instead of raw zip.</span> : null}
-              <input
-                id="twitter-archive-upload"
-                type="file"
-                accept=".zip"
-                onChange={handleTwitterArchiveSelected}
-              />
-              <Input
-                id="twitter-archive-dataset-name"
-                type="text"
-                placeholder="Dataset name"
-                value={twitterArchiveDatasetName}
-                onChange={(e) => setTwitterArchiveDatasetName(e.target.value)}
-              />
-              <Input
-                id="twitter-archive-year"
-                type="number"
-                placeholder="Optional year filter (e.g. 2025)"
-                value={twitterArchiveYear}
-                onChange={(e) => setTwitterArchiveYear(e.target.value)}
-              />
-              {twitterArchiveNameTaken ? (
-                <div className="name-taken-warning">This dataset name is already taken.</div>
+                <Input
+                  id="twitter-archive-year"
+                  type="number"
+                  placeholder="Optional year filter (e.g. 2025)"
+                  value={twitterArchiveYear}
+                  onChange={(e) => setTwitterArchiveYear(e.target.value)}
+                />
+
+                {twitterArchiveNameTaken ? (
+                  <div className={styles.warningBanner}>This dataset name is already taken.</div>
+                ) : null}
+
+                <Button
+                  type="submit"
+                  disabled={
+                    !twitterArchiveFile ||
+                    !twitterArchiveDatasetName ||
+                    twitterArchiveNameTaken ||
+                    twitterArchiveExtracting
+                  }
+                  text={twitterArchiveExtracting ? 'Processing archive locally...' : 'Import Archive'}
+                />
+              </form>
+
+              {localExtractedRecordCount ? (
+                <div className={styles.countBadge}>
+                  Prepared {localExtractedRecordCount} records locally for upload.
+                </div>
               ) : null}
-              <Button
-                type="submit"
-                disabled={
-                  !twitterArchiveFile ||
-                  !twitterArchiveDatasetName ||
-                  twitterArchiveNameTaken ||
-                  twitterArchiveExtracting
-                }
-                text={twitterArchiveExtracting ? 'Processing archive locally...' : 'Import Archive'}
-              />
-            </form>
-            {localExtractedRecordCount ? (
-              <span>Prepared {localExtractedRecordCount} tweet/like records locally for upload.</span>
-            ) : null}
+            </div>
+
+            {/* Community Archive Import */}
+            <div className={styles.glassCard}>
+              <form onSubmit={submitCommunityImport} className={styles.cardForm}>
+                <h3 className={styles.cardTitle}>Import from Community Archive</h3>
+                <p className={styles.cardDescription}>
+                  Fetch a public archive by username and auto-build your knowledge index
+                </p>
+                <div className={styles.helperNote}>
+                  Note: community archives may not include likes yet.
+                </div>
+
+                <Input
+                  id="community-username"
+                  type="text"
+                  placeholder="Username (without @)"
+                  value={communityUsername}
+                  onChange={(e) => setCommunityUsername(e.target.value)}
+                />
+                <Input
+                  id="community-dataset-name"
+                  type="text"
+                  placeholder="Dataset name"
+                  value={communityDatasetName}
+                  onChange={(e) => setCommunityDatasetName(e.target.value)}
+                />
+                <Input
+                  id="community-year"
+                  type="number"
+                  placeholder="Optional year filter (e.g. 2025)"
+                  value={communityYear}
+                  onChange={(e) => setCommunityYear(e.target.value)}
+                />
+
+                {communityNameTaken ? (
+                  <div className={styles.warningBanner}>This dataset name is already taken.</div>
+                ) : null}
+
+                <Button
+                  type="submit"
+                  disabled={!communityUsername || !communityDatasetName || communityNameTaken}
+                  text="Import Community Archive"
+                />
+              </form>
+            </div>
           </div>
-          <div className="hf-downloader">
-            <form onSubmit={submitCommunityImport}>
-              <h3>Import from Community Archive</h3>
-              <label htmlFor="community-username">
-                <span>Fetch a public archive by username and auto-build your knowledge index</span>
-              </label>
-              <Input
-                id="community-username"
-                type="text"
-                placeholder="Username (without @)"
-                value={communityUsername}
-                onChange={(e) => setCommunityUsername(e.target.value)}
-              />
-              <Input
-                id="community-dataset-name"
-                type="text"
-                placeholder="Dataset name"
-                value={communityDatasetName}
-                onChange={(e) => setCommunityDatasetName(e.target.value)}
-              />
-              <Input
-                id="community-year"
-                type="number"
-                placeholder="Optional year filter (e.g. 2025)"
-                value={communityYear}
-                onChange={(e) => setCommunityYear(e.target.value)}
-              />
-              {communityNameTaken ? (
-                <div className="name-taken-warning">This dataset name is already taken.</div>
-              ) : null}
-              <Button
-                type="submit"
-                disabled={!communityUsername || !communityDatasetName || communityNameTaken}
-                text="Import Community Archive"
-              />
-            </form>
-          </div>
-          {twitterImportError ? <div className="name-taken-warning">{twitterImportError}</div> : null}
-          <JobProgress job={twitterImportJob} clearJob={() => setTwitterImportJob(null)} />
-        </div>
+
+          {/* Global import error */}
+          {twitterImportError ? (
+            <div className={styles.globalError}>{twitterImportError}</div>
+          ) : null}
+
+          {/* Job progress */}
+          {twitterImportJob ? (
+            <div className={styles.jobWrapper}>
+              <JobProgress job={twitterImportJob} clearJob={() => setTwitterImportJob(null)} />
+            </div>
+          ) : null}
+        </>
       )}
 
-      <div className="section datasets">
-        <h3>Datasets</h3>
-        <div className="datasets-content">
-          {datasets.map((dataset) => (
-            <div className="dataset" key={dataset.id}>
-              <h3>
-                {' '}
-                {dataset.id}
-              </h3>
-              <span>{dataset.length} rows</span>
-              <div className="scope-links">
-                {scopes[dataset.id] &&
-                  scopes[dataset.id].map &&
-                  scopes[dataset.id]?.map((scope, i) => (
-                    <div className="scope-link" key={i}>
-                      <Link to={`/datasets/${dataset.id}/explore/${scope.id}`}>
-                        {scope.label || scope.id}
-                        <br />
+      {/* Datasets Section */}
+      <div className={styles.datasetsSection}>
+        <h3 className={styles.sectionTitle}>Datasets</h3>
+        <div className={styles.datasetsList}>
+          {datasets.length === 0 ? (
+            <div className={styles.emptyState}>No datasets yet. Import your first archive above.</div>
+          ) : (
+            datasets.map((dataset) => (
+              <div className={styles.datasetCard} key={dataset.id}>
+                <div className={styles.datasetHeader}>
+                  <h3 className={styles.datasetName}>{dataset.id}</h3>
+                  <span className={styles.datasetRowCount}>{dataset.length} rows</span>
+                </div>
+                <div className={styles.scopeGrid}>
+                  {scopes[dataset.id] &&
+                    scopes[dataset.id].map &&
+                    scopes[dataset.id]?.map((scope, i) => (
+                      <Link
+                        className={styles.scopeCard}
+                        to={`/datasets/${dataset.id}/explore/${scope.id}`}
+                        key={i}
+                      >
+                        <span className={styles.scopeLabel}>{scope.label || scope.id}</span>
                         {scope.ignore_hulls ? (
-                          <img src={`${apiUrl}/files/${dataset.id}/umaps/${scope.umap_id}.png`} />
+                          <img
+                            className={styles.scopeImage}
+                            src={`${apiUrl}/files/${dataset.id}/umaps/${scope.umap_id}.png`}
+                            alt={scope.label || scope.id}
+                          />
                         ) : (
                           <img
+                            className={styles.scopeImage}
                             src={`${apiUrl}/files/${dataset.id}/clusters/${scope.cluster_id}.png`}
+                            alt={scope.label || scope.id}
                           />
                         )}
+                        {scope.description ? (
+                          <span className={styles.scopeDescription}>{scope.description}</span>
+                        ) : null}
                       </Link>
-                      <br />
-                      <span className="scope-description">{scope.description}</span>
-                    </div>
-                  ))}
+                    ))}
+                </div>
               </div>
-            </div>
-          ))}
+            ))
+          )}
         </div>
       </div>
     </div>

@@ -5,8 +5,9 @@
    /**
   FONTS
   **/
-  --font-primary: 'Golos Text', 'Roboto', system-ui, sans-serif;
-  --font-secondary: 'Inter';
+  --font-primary: 'Instrument Sans', system-ui, sans-serif;
+  --font-display: 'Instrument Serif', Georgia, serif;
+  --font-secondary: 'Instrument Sans', system-ui, sans-serif;
   --font-backup: 'system-ui';
   /**
   TYPOGRPAPHY
@@ -29,7 +30,7 @@
   /**
   AVATAR
   **/
-  --color-avatar-bg: #E8EFFD;
+  --color-avatar-bg: #DDF1E4;
   /**
   BUTTON
   **/
@@ -43,7 +44,7 @@
   --button-padding-medium-round: 8px;
   --button-padding-small: 3px 6px;
   --button-padding-small-round: 6px;
-  --button-box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.05);
+  --button-box-shadow: 0 2px 12px 0 rgba(16, 15, 15, 0.05);
   /**
   COPY BUTTON
   **/
@@ -187,43 +188,43 @@
   /**
   STATUS
   **/
-  --color-status-ready: #7ED320;
-  --color-status-offline: #ADA7A8;
-  --color-status-busy: #F19B53;
+  --color-status-ready: #879A39;
+  --color-status-offline: #B7B5AC;
+  --color-status-busy: #DA702C;
   /**
   BACKGROUNDS
   **/
-  --color-background-overlay: rgba(23, 10, 122, 0.4);
-  --color-background-subtle-callout: #E8EFFD;
-  --color-background-modal-overlay: rgba(0, 0, 0, 0.3);
-  --color-background-critical: #F9E1E5;
-  --color-background-neutral-0: #FFFFFF;
+  --color-background-overlay: rgba(16, 15, 15, 0.4);
+  --color-background-subtle-callout: #DDF1E4;
+  --color-background-modal-overlay: rgba(16, 15, 15, 0.3);
+  --color-background-critical: #FFE1D5;
+  --color-background-neutral-0: #FFFCF0;
   /**
   MENU
   **/
-  --color-interactions-menu: #000000;
-  --color-interactions-menu-hover: #2F2F2F;
-  --color-interactions-menu-inactive: #757575;
+  --color-interactions-menu: #100F0F;
+  --color-interactions-menu-hover: #282726;
+  --color-interactions-menu-inactive: #878580;
   /**
   Badge
   **/
-  --color-badge-primary-bg: #000000;
-  --color-badge-primary-text: #FFFFFF;
-  --color-badge-secondary-bg: #FFFFFF;
-  --color-badge-secondary-text: #000000;
+  --color-badge-primary-bg: #100F0F;
+  --color-badge-primary-text: #FFFCF0;
+  --color-badge-secondary-bg: #FFFCF0;
+  --color-badge-secondary-text: #100F0F;
   /**
   BUTTON
   **/
-  --copy-button-text-color: #757575;
+  --copy-button-text-color: #878580;
 
 
-  font-family: 'Golos Text', Roboto, Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
+  font-family: 'Instrument Sans', system-ui, Avenir, Helvetica, Arial, sans-serif;
   line-height: 1.5;
   font-weight: 400;
 
   color-scheme: light dark;
-  color: rgba(255, 255, 255, 0.87);
-  background-color: #242424;
+  color: rgba(242, 240, 229, 0.87);
+  background-color: #282726;
 
   font-synthesis: none;
   text-rendering: optimizeLegibility;
@@ -234,11 +235,11 @@
 
 a {
   font-weight: 500;
-  color: #646cff;
+  color: #205EA6;
   text-decoration: inherit;
 }
 a:hover {
-  color: #535bf2;
+  color: #1A4F8C;
 }
 
 body {
@@ -256,6 +257,10 @@ body {
   }
 }
 
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-display);
+}
+
 h1 {
   font-size: 3.2em;
   line-height: 1.1;
@@ -270,13 +275,13 @@ button {
   font-size: 1em;
   font-weight: 500;
   /* font-family: inherit; */
-  font-family: 'Orbitron', sans-serif;
-  background-color: #1a1a1a;
+  font-family: 'Instrument Sans', system-ui, sans-serif;
+  background-color: #1C1B1A;
   cursor: pointer;
   transition: border-color 0.25s;
 }
 button:hover {
-  border-color: #646cff;
+  border-color: #205EA6;
 }
 button:focus,
 button:focus-visible {
@@ -292,7 +297,7 @@ button:focus-visible {
 //   font-size: 1em;
 //   font-weight: 500;
 //   /* font-family: inherit; */
-//   font-family: 'Orbitron', sans-serif;
+//   font-family: 'Instrument Sans', system-ui, sans-serif;
 //   /* background-color: #1a1a1a; */
 //   cursor: pointer;
 //   transition: border-color 0.25s;
@@ -332,16 +337,28 @@ button:focus-visible {
 
 @media (prefers-color-scheme: light) {
   :root {
-    color: #213547;
-    background-color: #ffffff;
+    color: #282726;
+    background-color: #FFFCF0;
   }
   a:hover {
-    color: #747bff;
+    color: #4385BE;
   }
   button {
-    background-color: #f9f9f9;
+    background-color: #F2F0E5;
   }
- 
+}
+
+:root[data-theme="light"] {
+  color: #282726;
+  background-color: #FFFCF0;
+}
+// Use :where() so button/link overrides match media-query specificity (0,0,0,1)
+// and don't clobber component-level class selectors like .tocItem { background: none }
+:where([data-theme="light"]) a:hover {
+  color: #4385BE;
+}
+:where([data-theme="light"]) button {
+  background-color: #F2F0E5;
 }
 
 
@@ -364,55 +381,68 @@ button:focus-visible {
 
 @media (prefers-color-scheme: dark) {
   :root {
-    color: rgba(255, 255, 255, 0.87);
-    background-color: #242424;
+    color: rgba(242, 240, 229, 0.87);
+    background-color: #282726;
 
-    // Background colors
-    --color-background-overlay: rgba(23, 10, 122, 0.6);
-    --color-background-subtle-callout: #2A2A3F;
-    --color-background-modal-overlay: rgba(0, 0, 0, 0.5);
-    --color-background-critical: #3F1F24;
-    --color-background-neutral-0: #1A1A1A;
+    // Dark-mode overrides for tokens not covered by brand-theme.scss
+    --color-background-overlay: rgba(16, 15, 15, 0.6);
+    --color-background-subtle-callout: #122F2C;
+    --color-background-modal-overlay: rgba(16, 15, 15, 0.5);
+    --color-background-critical: #3E1715;
+    --color-background-neutral-0: #100F0F;
 
-    // Text colors
-    --color-text-main: #FFFFFF;
-    --color-text-subtle: rgba(255, 255, 255, 0.65);
-    --color-text-reverse: #213547;
-    --color-text-reverse-subtle: rgba(33, 53, 71, 0.65);
+    --color-avatar-bg: #122F2C;
 
-    // Border colors
-    --color-border-1: #333333;
-    --color-border-2: #404040;
-    --color-border-3: #4D4D4D;
+    --color-badge-primary-bg: #FFFCF0;
+    --color-badge-primary-text: #100F0F;
+    --color-badge-secondary-bg: #343331;
+    --color-badge-secondary-text: #F2F0E5;
 
-    // Neutral colors
-    --color-neutral-0: #1A1A1A;
-    --color-neutral-0-reverse: #FFFFFF;
-    --color-neutral-1: #2A2A2A;
-    --color-neutral-2: #3A3A3A;
-    --color-neutral-3: #4A4A4A;
+    --color-interactions-menu: #F2F0E5;
+    --color-interactions-menu-hover: #DAD8CE;
+    --color-interactions-menu-inactive: #9F9D96;
 
-    // Badge colors
-    --color-badge-primary-bg: #FFFFFF;
-    --color-badge-primary-text: #000000;
-    --color-badge-secondary-bg: #333333;
-    --color-badge-secondary-text: #FFFFFF;
-
-    // Menu colors
-    --color-interactions-menu: #FFFFFF;
-    --color-interactions-menu-hover: #CCCCCC;
-    --color-interactions-menu-inactive: #808080;
-
-    // Copy button
-    --copy-button-text-color: #A0A0A0;
+    --copy-button-text-color: #9F9D96;
   }
 
   button {
-    background-color: #2A2A2A;
-    color: #FFFFFF;
+    background-color: #282726;
+    color: #F2F0E5;
   }
 
   ::-webkit-scrollbar-thumb {
-    background-color: #555;
+    background-color: #575653;
   }
+}
+
+:root[data-theme="dark"] {
+  color: rgba(242, 240, 229, 0.87);
+  background-color: #282726;
+
+  --color-background-overlay: rgba(16, 15, 15, 0.6);
+  --color-background-subtle-callout: #122F2C;
+  --color-background-modal-overlay: rgba(16, 15, 15, 0.5);
+  --color-background-critical: #3E1715;
+  --color-background-neutral-0: #100F0F;
+
+  --color-avatar-bg: #122F2C;
+
+  --color-badge-primary-bg: #FFFCF0;
+  --color-badge-primary-text: #100F0F;
+  --color-badge-secondary-bg: #343331;
+  --color-badge-secondary-text: #F2F0E5;
+
+  --color-interactions-menu: #F2F0E5;
+  --color-interactions-menu-hover: #DAD8CE;
+  --color-interactions-menu-inactive: #9F9D96;
+
+  --copy-button-text-color: #9F9D96;
+}
+// Low-specificity overrides matching the media-query approach
+:where([data-theme="dark"]) button {
+  background-color: #282726;
+  color: #F2F0E5;
+}
+:where([data-theme="dark"]) ::-webkit-scrollbar-thumb {
+  background-color: #575653;
 }

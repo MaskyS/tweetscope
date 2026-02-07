@@ -1,94 +1,137 @@
 .subHeaderContainer {
-    background-color: var(--neutrals-color-neutral-1);
-    border-bottom: 1px solid #e5e5e5;
-    padding: 0 10px;
-    z-index: 100;
+  position: fixed;
+  top: 10px;
+  left: 12px;
+  z-index: 120;
 }
 
-.tabsContainer {
-    display: flex;
-    justify-content: space-between;
-    width: 100%;
-    color: var(--text-color-text-neutral);
-    font-size: var(--input-font-size);
-    font-weight: 500;
-}
-
-.leftTabs {
-    display: flex;
-    align-items: center;
-}
-
-.rightTabs {
-    display: flex;
-    align-items: center;
-    margin-left: auto;
+.contextBar {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.58);
+  backdrop-filter: blur(10px) saturate(140%);
+  -webkit-backdrop-filter: blur(10px) saturate(140%);
+  border: 1px solid var(--glass-border-subtle, rgba(40, 39, 38, 0.1));
+  box-shadow: var(--glass-shadow, 0 2px 10px rgba(40, 39, 38, 0.1));
 }
 
 .scopeBadge {
-    border: 1px solid #d7d7d7;
-    border-radius: 10px;
-    padding: 6px 10px;
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    gap: 4px;
-    line-height: 1.1;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
 }
 
 .scopeLabel {
-    font-size: 0.65rem;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    color: #666;
+  font-size: 0.62rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #6F6E69;
+  white-space: nowrap;
 }
 
 .scopeValue {
-    font-size: 0.85rem;
-    font-weight: 600;
-    color: #222;
-    max-width: 280px;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #282726;
+  max-width: min(30vw, 260px);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-
-.tab {
-    text-decoration: none;
-    color: var(--neutrals-color-neutral-3);
-    padding: 8px 12px;
-    border-bottom: 2px solid transparent;
-    transition: border-color 0.2s;
-    /* font-size: 14px; */
+.actionButton {
+  text-decoration: none;
+  font-family: 'Instrument Sans', system-ui, sans-serif;
+  font-size: 0.74rem;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  color: #1C6C66;
+  background: rgba(36, 131, 123, 0.14);
+  border: 1px solid rgba(36, 131, 123, 0.24);
+  border-radius: 999px;
+  padding: 6px 10px;
+  transition: background 0.18s ease, transform 0.18s ease;
 }
 
-.tab:hover {
-    border-bottom-color: rgba(0, 0, 0, 0.2);
-    color: var(--text-color-text-neutral-1);
+.actionButton:hover {
+  background: rgba(36, 131, 123, 0.22);
+  transform: translateY(-1px);
 }
 
-.activeTab {
-    border-bottom-color: var(--text-color-text-primary);
-    color: var(--text-color-text-primary);
+.disabledAction {
+  opacity: 0.55;
+  pointer-events: none;
 }
 
-.disabledTab {
-    color: var(--semantic-color-semantic-neutral-disabled);
-    cursor: not-allowed;
+@media (max-width: 900px) {
+  .scopeLabel {
+    display: none;
+  }
+
+  .scopeValue {
+    max-width: min(42vw, 180px);
+  }
 }
 
-.divider {
-    border-left: 2px solid #e5e5e5;
-    height: 34px;
-    margin: 0 10px;
+@media (max-width: 640px) {
+  .scopeBadge {
+    display: none;
+  }
 }
 
 @media (prefers-color-scheme: dark) {
-    .subHeaderContainer {
-        background-color: #111;
-        border-bottom: 1px solid var(--borders-color-border-3);
-    }
+  .contextBar {
+    background: rgba(28, 27, 26, 0.66);
+    border-color: var(--glass-border-subtle, rgba(242, 240, 229, 0.1));
+    box-shadow: var(--glass-shadow-hover, 0 8px 30px rgba(16, 15, 15, 0.52));
+  }
 
+  .scopeLabel {
+    color: #B7B5AC;
+  }
 
+  .scopeValue {
+    color: #F2F0E5;
+  }
+
+  .actionButton {
+    color: #A2DECE;
+    background: rgba(36, 131, 123, 0.2);
+    border-color: rgba(36, 131, 123, 0.32);
+  }
+
+  .actionButton:hover {
+    background: rgba(36, 131, 123, 0.28);
+  }
+}
+
+:global(:root[data-theme="dark"]) {
+  .contextBar {
+    background: rgba(28, 27, 26, 0.66);
+    border-color: var(--glass-border-subtle, rgba(242, 240, 229, 0.1));
+    box-shadow: var(--glass-shadow-hover, 0 8px 30px rgba(16, 15, 15, 0.52));
+  }
+
+  .scopeLabel {
+    color: #B7B5AC;
+  }
+
+  .scopeValue {
+    color: #F2F0E5;
+  }
+
+  .actionButton {
+    color: #A2DECE;
+    background: rgba(36, 131, 123, 0.2);
+    border-color: rgba(36, 131, 123, 0.32);
+  }
+
+  .actionButton:hover {
+    background: rgba(36, 131, 123, 0.28);
+  }
 }

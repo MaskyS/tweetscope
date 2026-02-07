@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import Home from './components/Home';
 import Explore from './pages/V2/FullScreenExplore';
-import Nav from './components/Nav';
 import { apiService } from './lib/apiService';
 import './App.css';
 
@@ -69,7 +68,6 @@ function App() {
 
   return (
     <Router basename={env.BASE_NAME}>
-      <Nav />
       <div className="page">
         <Routes>
           {isSingleProfile ? (

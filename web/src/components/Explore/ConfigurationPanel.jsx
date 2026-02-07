@@ -1,5 +1,14 @@
 import { Button, Switch } from 'react-element-forge';
+import { Sun, Moon, Monitor } from 'lucide-react';
+import { useColorMode } from '../../hooks/useColorMode';
 import styles from './ConfigurationPanel.module.scss';
+
+const THEME_CYCLE = ['auto', 'light', 'dark'];
+const THEME_META = {
+  auto: { Icon: Monitor, label: 'Auto' },
+  light: { Icon: Sun, label: 'Light' },
+  dark: { Icon: Moon, label: 'Dark' },
+};
 
 const ConfigurationPanel = ({
   isOpen,
@@ -10,8 +19,42 @@ const ConfigurationPanel = ({
   toggleShowClusterOutlines,
   updatePointSize,
   updatePointOpacity,
+  linksAvailable = false,
+  linksMeta = null,
+  linksLoading = false,
+  toggleShowReplyEdges = () => {},
+  toggleShowQuoteEdges = () => {},
+  updateEdgeWidthScale = () => {},
+  timelineHasDates = false,
+  toggleShowTimeline = () => {},
 }) => {
-  const { showHeatMap, showClusterOutlines, pointSize, pointOpacity } = vizConfig;
+  const { themePreference, setThemePreference } = useColorMode();
+
+  const {
+    showHeatMap,
+    showClusterOutlines,
+    pointSize,
+    pointOpacity,
+    showReplyEdges = true,
+    showQuoteEdges = true,
+    edgeWidthScale = 1,
+    showTimeline = false,
+  } = vizConfig;
+
+  const internalReplyEdges = linksMeta?.internal_edge_type_counts?.reply;
+  const internalQuoteEdges = linksMeta?.internal_edge_type_counts?.quote;
+  const internalEdges = linksMeta?.internal_edges ?? linksMeta?.internal_internal_edges;
+  const hasInternalBreakdown =
+    Number.isFinite(internalEdges) &&
+    Number.isFinite(internalReplyEdges) &&
+    Number.isFinite(internalQuoteEdges);
+
+  const cycleTheme = () => {
+    const idx = THEME_CYCLE.indexOf(themePreference);
+    setThemePreference(THEME_CYCLE[(idx + 1) % THEME_CYCLE.length]);
+  };
+
+  const { Icon: ThemeIcon, label: themeLabel } = THEME_META[themePreference] || THEME_META.auto;
 
   return (
     <div className={`${styles.panel} ${isOpen ? styles.open : ''}`}>
@@ -27,14 +70,6 @@ const ConfigurationPanel = ({
       </div>
 
       <div className={styles.content}>
-        {/* Dropdown Example
-        <div className={styles.configSection}>
-          <label>Color by</label>
-          <select className={styles.select}>
-            <option>Nomic Topic: medium</option>
-          </select>
-        </div> */}
-
         <div className={styles.configSection}>
           <label>Point Size: {pointSize}x</label>
           <input
@@ -69,14 +104,64 @@ const ConfigurationPanel = ({
           label="Show Cluster Outlines"
         />
 
-        <Switch
-          value={showHeatMap}
-          onChange={toggleShowHeatMap}
-          color="secondary"
-          label="Show Heat Map"
-        />
+        {timelineHasDates && (
+          <Switch
+            value={showTimeline}
+            onChange={toggleShowTimeline}
+            color="secondary"
+            label="Show Timeline"
+          />
+        )}
 
-        <div className={styles.configSection}></div>
+        {linksAvailable && (
+          <>
+            <Switch
+              value={showReplyEdges}
+              onChange={toggleShowReplyEdges}
+              defaultState={showReplyEdges}
+              color="secondary"
+              label="Show Reply Edges"
+            />
+
+            <Switch
+              value={showQuoteEdges}
+              onChange={toggleShowQuoteEdges}
+              defaultState={showQuoteEdges}
+              color="secondary"
+              label="Show Quote Edges"
+            />
+
+            <div className={styles.configSection}>
+              <label>Edge Width: {edgeWidthScale.toFixed(1)}x</label>
+              <input
+                type="range"
+                min="0.2"
+                max="2.2"
+                step="0.1"
+                value={edgeWidthScale}
+                onChange={(e) => updateEdgeWidthScale(+e.target.value)}
+                className={styles.slider}
+              />
+            </div>
+
+            <div className={styles.linksMeta}>
+              {linksLoading ? (
+                <span>Loading links...</span>
+              ) : (
+                <span>
+                  {hasInternalBreakdown
+                    ? `In-dataset links: ${internalEdges} (${internalReplyEdges} replies, ${internalQuoteEdges} quotes)`
+                    : `Links: ${linksMeta?.edges ?? 0} (${linksMeta?.edge_type_counts?.reply ?? 0} replies, ${linksMeta?.edge_type_counts?.quote ?? 0} quotes)`}
+                </span>
+              )}
+            </div>
+          </>
+        )}
+
+        <button className={styles.themeCycler} onClick={cycleTheme} title={`Theme: ${themeLabel}`}>
+          <ThemeIcon size={14} />
+          <span>{themeLabel}</span>
+        </button>
       </div>
     </div>
   );

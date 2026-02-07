@@ -10,3 +10,7 @@
     background-color: #111;
   }
 }
+
+:global(:root[data-theme="dark"]) .scatter {
+  background-color: #111;
+}

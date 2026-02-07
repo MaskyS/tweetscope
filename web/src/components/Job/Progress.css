@@ -5,7 +5,7 @@
   padding: 12px;
   /* background-color: #222; */
   border-radius: 4px;
-  box-shadow: 0 0 10px 0 rgba(0, 0, 0, 0.2);
+  box-shadow: var(--shadow-elev-1, 0 2px 10px rgba(40, 39, 38, 0.1));
 
 }
 .job-progress pre {

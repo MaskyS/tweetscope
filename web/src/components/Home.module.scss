@@ -1,0 +1,535 @@
+/* ==========================================
+   Home / Import Page — Liquid Glass Redesign
+   ========================================== */
+
+/* Animations */
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Page Container */
+.home {
+  padding: var(--space-6) var(--space-6);
+  overflow-y: auto;
+  height: 100%;
+  max-width: 960px;
+  margin: 0 auto;
+  padding-top: var(--space-6);
+}
+
+/* Hero Header */
+.hero {
+  text-align: center;
+  margin-bottom: var(--space-10);
+  animation: fadeInUp 0.4s ease-out both;
+}
+
+.heroTitle {
+  font-family: 'Instrument Serif', Georgia, serif;
+  font-size: 2rem;
+  font-weight: 400;
+  color: var(--text-color-text-main);
+  margin: 0 0 var(--space-2);
+  letter-spacing: -0.02em;
+}
+
+.heroSubtitle {
+  font-family: 'Instrument Sans', sans-serif;
+  font-size: 1rem;
+  font-weight: 400;
+  color: var(--text-color-text-subtle);
+  margin: 0;
+}
+
+/* Import Cards Row */
+.importRow {
+  display: flex;
+  flex-direction: row;
+  gap: var(--space-6);
+  margin-bottom: var(--space-8);
+}
+
+/* Glass Card — shared base for import forms */
+.glassCard {
+  flex: 1;
+  position: relative;
+  background: var(--glass-bg);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  border: 1px solid var(--glass-border-subtle);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--glass-shadow);
+  padding: var(--space-6);
+  transition: box-shadow var(--transition-normal), border-color var(--transition-normal);
+  overflow: hidden;
+
+  /* Gradient overlay on hover */
+  &::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.18), rgba(255, 255, 255, 0.04));
+    transition: opacity var(--transition-fast);
+    pointer-events: none;
+    border-radius: inherit;
+  }
+
+  &:hover {
+    box-shadow: var(--glass-shadow-hover);
+
+    &::before {
+      opacity: 1;
+    }
+  }
+
+  /* Staggered entrance */
+  animation: fadeInUp 0.4s ease-out both;
+
+  &:nth-child(1) {
+    animation-delay: 0.08s;
+  }
+  &:nth-child(2) {
+    animation-delay: 0.18s;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    &::before {
+      background: linear-gradient(135deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.01));
+    }
+  }
+
+  :global(:root[data-theme="dark"]) & {
+    &::before {
+      background: linear-gradient(135deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.01));
+    }
+  }
+}
+
+/* Form inside glass card */
+.cardForm {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  position: relative;
+  z-index: 1;
+}
+
+.cardTitle {
+  font-family: 'Instrument Sans', sans-serif;
+  font-size: 1.15rem;
+  font-weight: 600;
+  color: var(--text-color-text-main);
+  margin: 0 0 var(--space-1);
+}
+
+.cardDescription {
+  font-size: 0.875rem;
+  color: var(--text-color-text-subtle);
+  margin: 0;
+  line-height: 1.5;
+}
+
+.helperNote {
+  font-size: 0.8rem;
+  color: var(--text-color-text-subtle);
+}
+
+/* Styled File Drop Zone */
+.dropZone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  padding: var(--space-6) var(--space-4);
+  border: 2px dashed var(--borders-color-border-2);
+  border-radius: var(--radius-md);
+  background: rgba(0, 0, 0, 0.02);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  text-align: center;
+
+  &:hover {
+    border-color: var(--interactions---primary-color-interaction-primary);
+    background: rgba(36, 131, 123, 0.04);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    background: rgba(255, 255, 255, 0.03);
+
+    &:hover {
+      background: rgba(36, 131, 123, 0.08);
+    }
+  }
+
+  :global(:root[data-theme="dark"]) & {
+    background: rgba(255, 255, 255, 0.03);
+
+    &:hover {
+      background: rgba(36, 131, 123, 0.08);
+    }
+  }
+}
+
+.dropZoneIcon {
+  font-size: 1.5rem;
+  opacity: 0.5;
+}
+
+.dropZoneText {
+  font-size: 0.85rem;
+  color: var(--text-color-text-subtle);
+}
+
+.dropZoneFileName {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--interactions---primary-color-interaction-primary);
+}
+
+/* Hidden native file input */
+.hiddenInput {
+  display: none;
+}
+
+/* Upload limit text */
+.uploadLimit {
+  font-size: 0.8rem;
+  color: var(--text-color-text-subtle);
+}
+
+/* Privacy Mode Checkbox */
+.checkboxRow {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  background: rgba(0, 0, 0, 0.02);
+  border: 1px solid var(--glass-border-subtle);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background var(--transition-fast);
+
+  &:hover {
+    background: rgba(0, 0, 0, 0.04);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    background: rgba(255, 255, 255, 0.03);
+
+    &:hover {
+      background: rgba(255, 255, 255, 0.06);
+    }
+  }
+
+  :global(:root[data-theme="dark"]) & {
+    background: rgba(255, 255, 255, 0.03);
+
+    &:hover {
+      background: rgba(255, 255, 255, 0.06);
+    }
+  }
+}
+
+.checkboxLabel {
+  font-size: 0.875rem;
+  color: var(--text-color-text-main);
+  line-height: 1.4;
+}
+
+.checkboxHint {
+  font-size: 0.8rem;
+  color: var(--text-color-text-subtle);
+  margin-top: var(--space-1);
+}
+
+/* Warning / Error Banner */
+.warningBanner {
+  background: rgba(179, 75, 75, 0.08);
+  color: var(--text-color-text-critical);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(179, 75, 75, 0.15);
+  font-size: 0.875rem;
+  line-height: 1.4;
+}
+
+/* Extracted count badge */
+.countBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  background: rgba(123, 175, 90, 0.1);
+  color: var(--text-color-text-success);
+  font-size: 0.85rem;
+  font-weight: 500;
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-full);
+  border: 1px solid rgba(123, 175, 90, 0.15);
+}
+
+/* Global error banner (below both cards) */
+.globalError {
+  composes: warningBanner;
+  animation: fadeInUp 0.3s ease-out both;
+}
+
+/* Job Progress Wrapper */
+.jobWrapper {
+  background: var(--glass-bg);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  border: 1px solid var(--glass-border-subtle);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--glass-shadow);
+  padding: var(--space-4);
+  animation: fadeInUp 0.3s ease-out both;
+
+  /* Override JobProgress children styles */
+  :global(.job-progress) {
+    background: transparent;
+    box-shadow: none;
+  }
+
+  :global(pre) {
+    background: var(--neutrals-color-neutral-1);
+    color: var(--semantic-color-semantic-success);
+    border-radius: var(--radius-sm);
+    padding: var(--space-3);
+    font-size: 0.8rem;
+    max-height: 300px;
+    overflow-y: auto;
+  }
+
+  :global(button) {
+    font-family: 'Instrument Sans', sans-serif;
+  }
+}
+
+/* ==========================================
+   Datasets Section
+   ========================================== */
+
+.datasetsSection {
+  margin-top: var(--space-8);
+  animation: fadeInUp 0.4s ease-out 0.25s both;
+}
+
+.sectionTitle {
+  font-family: 'Instrument Serif', Georgia, serif;
+  font-size: 1.15rem;
+  font-weight: 400;
+  color: var(--text-color-text-main);
+  margin: 0 0 var(--space-4);
+}
+
+.datasetsList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+/* Individual Dataset Card */
+.datasetCard {
+  position: relative;
+  background: var(--glass-bg);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  border: 1px solid var(--glass-border-subtle);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--glass-shadow);
+  padding: var(--space-5);
+  transition: box-shadow var(--transition-normal), transform var(--transition-normal);
+  animation: fadeInUp 0.35s ease-out both;
+
+  &::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.18), rgba(255, 255, 255, 0.04));
+    transition: opacity var(--transition-fast);
+    pointer-events: none;
+    border-radius: inherit;
+  }
+
+  &:hover {
+    box-shadow: var(--glass-shadow-hover);
+    transform: translateY(-1px);
+
+    &::before {
+      opacity: 1;
+    }
+  }
+
+  @media (prefers-color-scheme: dark) {
+    &::before {
+      background: linear-gradient(135deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.01));
+    }
+  }
+
+  :global(:root[data-theme="dark"]) & {
+    &::before {
+      background: linear-gradient(135deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.01));
+    }
+  }
+}
+
+/* Stagger dataset card animations */
+.datasetCard:nth-child(1) { animation-delay: 0.05s; }
+.datasetCard:nth-child(2) { animation-delay: 0.1s; }
+.datasetCard:nth-child(3) { animation-delay: 0.15s; }
+.datasetCard:nth-child(4) { animation-delay: 0.2s; }
+.datasetCard:nth-child(5) { animation-delay: 0.25s; }
+
+.datasetHeader {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+  position: relative;
+  z-index: 1;
+}
+
+.datasetName {
+  font-family: 'Instrument Sans', sans-serif;
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: var(--text-color-text-main);
+  margin: 0;
+}
+
+.datasetRowCount {
+  font-size: 0.8rem;
+  color: var(--text-color-text-subtle);
+}
+
+/* Scope thumbnails */
+.scopeGrid {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  position: relative;
+  z-index: 1;
+}
+
+.scopeCard {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  background: rgba(0, 0, 0, 0.02);
+  border: 1px solid var(--glass-border-subtle);
+  border-radius: var(--radius-md);
+  transition: all var(--transition-fast);
+  text-decoration: none;
+  color: inherit;
+
+  &:hover {
+    transform: translateY(-1px);
+    box-shadow: var(--glass-shadow);
+    border-color: var(--interactions---primary-color-interaction-primary);
+    background: rgba(0, 0, 0, 0.03);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    background: rgba(255, 255, 255, 0.04);
+
+    &:hover {
+      background: rgba(255, 255, 255, 0.08);
+    }
+  }
+
+  :global(:root[data-theme="dark"]) & {
+    background: rgba(255, 255, 255, 0.04);
+
+    &:hover {
+      background: rgba(255, 255, 255, 0.08);
+    }
+  }
+}
+
+.scopeLabel {
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--text-color-text-main);
+}
+
+.scopeImage {
+  width: 220px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--glass-border-subtle);
+}
+
+.scopeDescription {
+  display: inline-block;
+  max-width: 220px;
+  font-size: 0.8rem;
+  color: var(--text-color-text-subtle);
+  line-height: 1.4;
+}
+
+/* Empty state */
+.emptyState {
+  text-align: center;
+  padding: var(--space-10) var(--space-6);
+  color: var(--text-color-text-subtle);
+  font-size: 0.95rem;
+}
+
+/* ==========================================
+   Responsive
+   ========================================== */
+
+@media (max-width: 720px) {
+  .home {
+    padding-top: 60px;
+    padding-left: var(--space-4);
+    padding-right: var(--space-4);
+  }
+
+  .heroTitle {
+    font-size: 1.5rem;
+  }
+
+  .importRow {
+    flex-direction: column;
+  }
+
+  .scopeImage {
+    width: 180px;
+  }
+}
+
+@media (max-width: 480px) {
+  .home {
+    padding-top: 48px;
+    padding-left: var(--space-3);
+    padding-right: var(--space-3);
+  }
+
+  .heroTitle {
+    font-size: 1.25rem;
+  }
+
+  .glassCard {
+    padding: var(--space-4);
+  }
+
+  .datasetCard {
+    padding: var(--space-4);
+  }
+
+  .scopeImage {
+    width: 140px;
+  }
+}

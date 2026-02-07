@@ -150,6 +150,46 @@ This tool is meant to be a part of a larger process. Something that hopefully he
 
 - We consider an input dataset the source of truth, a list of rows that can be indexed into. So all downstream operations, whether its embeddings, pointing to nearest neighbors or assigning data points to clusters, all use indices into the input dataset.
 
+### Visualization Color Principles (Explore V2)
+
+The V2 graph + sidebar color system follows a few strict rules so interaction states remain legible at scale:
+
+- Separate semantics:
+  Cluster identity uses categorical hue.
+  Interaction state (hover, selected, filtered) uses stroke/size/opacity, not hue-swaps.
+- Use mode-specific palettes:
+  Light mode uses darker accent tones over warm paper backgrounds.
+  Dark mode uses lighter accent tones over dark backgrounds.
+- Keep cross-panel color identity stable:
+  A cluster should keep the same hue in the scatter, hulls, topic tree, search icon, and tweet avatar.
+- Avoid color-only signaling:
+  Selection and hover always include non-color cues for accessibility.
+- Keep label chips subtle:
+  Label backgrounds are map-tinted and low-opacity (not hard white/black blocks).
+- Keep elevation neutral:
+  Use Flexoki-neutral shadow tokens (not pure black ramps) so depth doesn’t introduce a second color system.
+- Keep panel/map harmony:
+  Sidebar glass uses the same base hue family as map background; differences should read as elevation, not palette mismatch.
+- Keep labels non-blocking:
+  Label text should not intercept point hover/click. Use lightweight label anchors for label-click affordance.
+
+Implementation notes:
+
+- Theme tokens: `web/src/latentscope--brand-theme.scss`
+- Cluster palette + scatter labels: `web/src/components/Explore/V2/DeckGLScatter.jsx`
+- Hull/annotation/hover card color sync: `web/src/components/Explore/V2/VisualizationPane.jsx`
+- Topic tree cluster-state color sync: `web/src/components/Explore/V2/TopicTree.jsx`
+- Sidebar layout/motion + panel surfaces: `web/src/pages/V2/FullScreenExplore.jsx`
+- Explore shell styling (rounded clipping, buttons, shadows): `web/src/pages/V2/Explore.css`
+
+References used for the color system:
+
+- Flexoki (palette + token model): https://stephango.com/flexoki
+- ColorBrewer scheme taxonomy: https://colorbrewer2.org/learnmore/schemes_full.html
+- Seaborn palette guidance (categorical vs numeric): https://seaborn.pydata.org/tutorial/color_palettes.html
+- WCAG 2.1, Use of Color: https://www.w3.org/WAI/WCAG21/Understanding/use-of-color.html
+- WCAG 2.1, Non-text Contrast: https://www.w3.org/WAI/WCAG21/Understanding/non-text-contrast.html
+
 ## Command Line Scripts: Detailed description
 
 If you want to use the CLI instead of the web UI you can use the following scripts.
