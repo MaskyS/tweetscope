@@ -13,6 +13,9 @@ TweetFeed.propTypes = {
   onClick: PropTypes.func,
   hoveredIndex: PropTypes.number,
   dateColumn: PropTypes.string,
+  nodeStats: PropTypes.object,
+  onViewThread: PropTypes.func,
+  onViewQuotes: PropTypes.func,
 };
 
 function TweetFeed({
@@ -24,6 +27,9 @@ function TweetFeed({
   onClick = () => {},
   hoveredIndex = null,
   dateColumn = null,
+  nodeStats = null,
+  onViewThread,
+  onViewQuotes,
 }) {
   const { dataTableRows, page, setPage, totalPages, loading } = useFilter();
 
@@ -72,6 +78,9 @@ function TweetFeed({
               onHover={onHover}
               onClick={onClick}
               showFeatures={!!sae_id}
+              nodeStats={nodeStats?.get(row.ls_index)}
+              onViewThread={onViewThread ? () => onViewThread(row.ls_index) : undefined}
+              onViewQuotes={onViewQuotes ? () => onViewQuotes(row.ls_index) : undefined}
             />
           );
         })}

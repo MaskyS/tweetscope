@@ -14,7 +14,7 @@
 .searchInput {
     width: 80%;
     padding: 10px;
-    border: 1px solid #ccc;
+    border: 1px solid var(--borders-color-border-1);
     border-radius: 4px;
     font-size: 14px;
 }
@@ -25,9 +25,9 @@
     left: 0;
     width: 100%;
     z-index: 1000;
-    background: white;
+    background: var(--neutrals-color-neutral-0);
     border-radius: 8px;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    box-shadow: var(--glass-shadow, 0 2px 10px rgba(40, 39, 38, 0.1));
     margin-top: 8px;
     animation: fadeIn 0.2s ease-out forwards;
     transform-origin: top center;
@@ -57,4 +57,3 @@
     gap: 12px;
     padding-top: 6px;
 }
-

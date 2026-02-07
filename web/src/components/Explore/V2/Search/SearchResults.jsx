@@ -7,6 +7,8 @@ import { Button } from 'react-element-forge';
 import { useScope } from '@/contexts/ScopeContext';
 import { filterConstants, findFeaturesByQuery, findClustersByQuery } from './utils';
 import useColumnFilter from '@/hooks/useColumnFilter';
+import { useColorMode } from '@/hooks/useColorMode';
+import { getClusterColorCSS } from '../DeckGLScatter';
 import ClusterIcon from './ClusterIcon';
 
 const COLUMNS = 'Columns';
@@ -32,6 +34,7 @@ const underlineText = (text, query) => {
 const Option = (props) => {
   const { data, selectProps } = props;
   const { onSelect, inputValue, setFilterQuery } = selectProps;
+  const { isDark: isDarkMode } = useColorMode();
 
   const handleClick = (e) => {
     e.preventDefault();
@@ -130,7 +133,7 @@ const Option = (props) => {
       <components.Option {...props}>
         <div className={styles.resultContent}>
           {groupType === 'Clusters' ? (
-            <ClusterIcon />
+            <ClusterIcon color={getClusterColorCSS(data.value, isDarkMode)} />
           ) : (
             <Button
               onClick={handleClick}

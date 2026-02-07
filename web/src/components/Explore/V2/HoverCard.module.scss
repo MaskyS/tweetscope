@@ -1,84 +1,227 @@
 .hoverCard {
-  // Override react-tooltip defaults
-  background: rgba(255, 255, 255, 0.95) !important;
-  backdrop-filter: blur(8px);
-  border-radius: 8px !important;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15) !important;
-  padding: 12px 14px !important;
-  max-width: 320px;
+  position: relative;
+  background: var(--glass-bg, rgba(255, 252, 240, 0.76));
+  backdrop-filter: blur(var(--glass-blur, 16px)) saturate(150%);
+  -webkit-backdrop-filter: blur(var(--glass-blur, 16px)) saturate(150%);
+  border-radius: 12px;
+  box-shadow: var(--glass-shadow-hover, 0 8px 28px rgba(40, 39, 38, 0.16));
+  border: 1px solid var(--glass-border-subtle, rgba(40, 39, 38, 0.1));
+  padding: 12px 14px 10px;
+  max-width: 360px;
   min-width: 200px;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  opacity: 1 !important;
-  color: #333 !important;
-  z-index: 9999 !important;
-
-  :global(.dark) & {
-    background: rgba(30, 30, 30, 0.95) !important;
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4) !important;
-    color: #e0e0e0 !important;
-  }
+  font-family: 'Instrument Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  color: var(--text-color-text-main, #282726);
+  pointer-events: auto;
 }
 
-.clusterRow {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 8px;
+.pinned {
+  border-color: rgba(36, 131, 123, 0.45);
 }
 
-.clusterDot {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  flex-shrink: 0;
+.pinnedTag {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  font-weight: 700;
+  color: #1C6C66;
+  background: rgba(36, 131, 123, 0.12);
+  border: 1px solid rgba(36, 131, 123, 0.26);
+  border-radius: 999px;
+  padding: 2px 8px;
+  line-height: 1.2;
 }
 
-.clusterLabel {
-  font-size: 13px;
-  font-weight: 600;
-  color: #333;
-  line-height: 1.3;
-
-  :global(.dark) & {
-    color: #e0e0e0;
-  }
-}
-
-.clusterNumber {
-  font-size: 11px;
-  color: #888;
-  font-weight: 400;
-
-  :global(.dark) & {
-    color: #777;
-  }
-}
-
-.indexRow {
-  font-size: 11px;
-  color: #666;
-  margin-bottom: 8px;
-  padding-bottom: 8px;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
-
-  :global(.dark) & {
-    color: #888;
-    border-bottom-color: rgba(255, 255, 255, 0.1);
-  }
-}
-
+/* 1. Text preview — dominant element */
 .textPreview {
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.5;
-  color: #444;
+  color: var(--text-color-text-main, #343331);
   margin: 0;
-  max-height: 120px;
+  max-height: 110px;
   overflow: hidden;
   display: -webkit-box;
   -webkit-line-clamp: 5;
   -webkit-box-orient: vertical;
 
-  :global(.dark) & {
-    color: #ccc;
+  :global([data-theme='dark']) & {
+    color: #CECDC3;
+  }
+}
+
+.expanded {
+  max-height: 240px;
+  -webkit-line-clamp: 10;
+}
+
+.typeTag {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--text-color-text-subtle, #878580);
+  background: rgba(0, 0, 0, 0.05);
+  border-radius: 4px;
+  padding: 1px 5px;
+  margin-right: 6px;
+  vertical-align: middle;
+
+  :global([data-theme='dark']) & {
+    color: #B7B5AC;
+    background: rgba(255, 255, 255, 0.08);
+  }
+}
+
+/* 2. Media thumbnails */
+.mediaRow {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+  overflow: hidden;
+}
+
+.mediaThumb {
+  display: block;
+  max-height: 120px;
+  max-width: 100%;
+  border-radius: 8px;
+  object-fit: cover;
+}
+
+/* 3. Quoted tweets */
+.quotesRow {
+  margin-top: 8px;
+}
+
+/* 4. External URL hints */
+.urlHints {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 6px;
+}
+
+.urlHint {
+  font-size: 11.5px;
+  color: var(--text-color-text-subtle, #6F6E69);
+  text-decoration: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+
+  &:hover {
+    color: #24837B;
+    text-decoration: underline;
+  }
+
+  :global([data-theme='dark']) & {
+    color: #B7B5AC;
+
+    &:hover {
+      color: #5ABDAC;
+    }
+  }
+}
+
+/* 5. Attribution line */
+.attributionLine {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--text-color-text-subtle, #6F6E69);
+  line-height: 1.3;
+
+  :global([data-theme='dark']) & {
+    color: #B7B5AC;
+  }
+}
+
+.dot {
+  color: var(--text-color-text-subtle, #878580);
+  opacity: 0.5;
+}
+
+.metricIcon {
+  flex-shrink: 0;
+  opacity: 0.6;
+}
+
+/* 6. Cluster hint */
+.clusterHint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--text-color-text-subtle, #878580);
+  line-height: 1.3;
+
+  :global([data-theme='dark']) & {
+    color: #B7B5AC;
+  }
+}
+
+.clusterDotSmall {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+/* Connection badges row */
+.connectionBadges {
+  margin-top: 6px;
+}
+
+/* 7. Action row — only visible when pinned */
+.actionRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--glass-border-subtle, rgba(40, 39, 38, 0.1));
+
+  :global([data-theme='dark']) & {
+    border-top-color: rgba(255, 255, 255, 0.12);
+  }
+}
+
+.actionButton {
+  appearance: none;
+  border: 1px solid var(--glass-border-subtle, rgba(40, 39, 38, 0.1));
+  border-radius: 8px;
+  background: var(--glass-bg, rgba(255, 252, 240, 0.76));
+  color: var(--text-color-text-main, #343331);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  padding: 7px 9px;
+  cursor: pointer;
+
+  &:hover:not(:disabled) {
+    background: var(--glass-bg-solid, rgba(255, 252, 240, 0.92));
+  }
+
+  &:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+
+  :global([data-theme='dark']) & {
+    color: #DAD8CE;
+    border-color: rgba(242, 240, 229, 0.2);
+    background: rgba(242, 240, 229, 0.08);
+
+    &:hover:not(:disabled) {
+      background: rgba(255, 255, 255, 0.13);
+    }
   }
 }

@@ -32,17 +32,29 @@
   }
 }
 
+:global(:root[data-theme="dark"]) .tweetCard {
+  border-bottom-color: rgba(255, 255, 255, 0.04);
+
+  &:hover {
+    background: rgba(255, 255, 255, 0.04);
+  }
+}
+
 .tweetCardHighlighted {
-  background: rgba(139, 207, 102, 0.08);
+  background: var(--highlight-bg, rgba(36, 131, 123, 0.08));
 
   &::before {
     opacity: 1;
-    background: linear-gradient(135deg, rgba(139, 207, 102, 0.06), transparent);
+    background: linear-gradient(135deg, var(--highlight-gradient, rgba(36, 131, 123, 0.06)), transparent);
   }
 
   @media (prefers-color-scheme: dark) {
-    background: rgba(139, 207, 102, 0.06);
+    background: var(--highlight-bg, rgba(36, 131, 123, 0.06));
   }
+}
+
+:global(:root[data-theme="dark"]) .tweetCardHighlighted {
+  background: var(--highlight-bg, rgba(36, 131, 123, 0.06));
 }
 
 .tweetHeader {
@@ -58,12 +70,12 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  font-family: 'Golos Text', system-ui, sans-serif;
+  font-family: 'Instrument Sans', system-ui, sans-serif;
   font-weight: 600;
   font-size: 14px;
   color: #fff;
   flex-shrink: 0;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  box-shadow: var(--shadow-elev-1, 0 2px 10px rgba(40, 39, 38, 0.1));
 }
 
 .headerContent {
@@ -79,7 +91,7 @@
 }
 
 .clusterLabel {
-  font-family: 'Golos Text', system-ui, sans-serif;
+  font-family: 'Instrument Sans', system-ui, sans-serif;
   font-weight: 600;
   font-size: 15px;
   color: var(--text-color-text-main);
@@ -91,7 +103,7 @@
 }
 
 .clusterHandle {
-  font-family: 'Golos Text', system-ui, sans-serif;
+  font-family: 'Instrument Sans', system-ui, sans-serif;
   font-size: 14px;
   font-weight: 400;
   color: var(--text-color-text-subtle);
@@ -106,7 +118,7 @@
 }
 
 .index {
-  font-family: 'Golos Text', system-ui, sans-serif;
+  font-family: 'Instrument Sans', system-ui, sans-serif;
   font-size: 13px;
   font-weight: 400;
   color: var(--text-color-text-subtle);
@@ -114,7 +126,7 @@
 }
 
 .date {
-  font-family: 'Golos Text', system-ui, sans-serif;
+  font-family: 'Instrument Sans', system-ui, sans-serif;
   font-size: 13px;
   font-weight: 400;
   color: var(--text-color-text-subtle);
@@ -127,7 +139,7 @@
 }
 
 .tweetBody {
-  font-family: 'Golos Text', system-ui, sans-serif;
+  font-family: 'Instrument Sans', system-ui, sans-serif;
   font-size: 16px;
   font-weight: 500;
   line-height: 1.5;
@@ -145,7 +157,7 @@
 }
 
 .showMore {
-  font-family: 'Golos Text', system-ui, sans-serif;
+  font-family: 'Instrument Sans', system-ui, sans-serif;
   font-size: 13px;
   font-weight: 500;
   color: var(--interactions---primary-color-interaction-primary);
@@ -209,7 +221,7 @@
   background: rgba(0, 0, 0, 0.03);
   border: 1px solid var(--glass-border-subtle);
   border-radius: var(--radius-md);
-  font-family: 'Golos Text', system-ui, sans-serif;
+  font-family: 'Instrument Sans', system-ui, sans-serif;
   font-size: 13px;
   font-weight: 500;
   color: var(--text-color-text-subtle);
@@ -226,6 +238,14 @@
     &:hover {
       background: rgba(255, 255, 255, 0.08);
     }
+  }
+}
+
+:global(:root[data-theme="dark"]) .quotedTweetCard {
+  background: rgba(255, 255, 255, 0.04);
+
+  &:hover {
+    background: rgba(255, 255, 255, 0.08);
   }
 }
 
@@ -250,7 +270,7 @@
   display: flex;
   align-items: center;
   gap: var(--space-1);
-  font-family: 'Golos Text', system-ui, sans-serif;
+  font-family: 'Instrument Sans', system-ui, sans-serif;
   font-size: 13px;
   font-weight: 500;
   color: var(--text-color-text-subtle);
@@ -270,7 +290,7 @@
   display: inline-flex;
   align-items: center;
   gap: var(--space-1);
-  font-family: 'Golos Text', system-ui, sans-serif;
+  font-family: 'Instrument Sans', system-ui, sans-serif;
   font-size: 13px;
   font-weight: 500;
   color: #1d9bf0;
@@ -278,8 +298,6 @@
   padding: var(--space-1) var(--space-3);
   border-radius: var(--radius-full);
   background: rgba(29, 155, 240, 0.08);
-  backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
   transition: all var(--transition-fast);
 
   &:hover {
@@ -295,11 +313,19 @@
   }
 }
 
+:global(:root[data-theme="dark"]) .twitterLink {
+  background: rgba(29, 155, 240, 0.12);
+
+  &:hover {
+    background: rgba(29, 155, 240, 0.2);
+  }
+}
+
 .embedButton {
   display: inline-flex;
   align-items: center;
   gap: var(--space-1);
-  font-family: 'Golos Text', system-ui, sans-serif;
+  font-family: 'Instrument Sans', system-ui, sans-serif;
   font-size: 13px;
   font-weight: 500;
   color: var(--text-color-text-subtle);
@@ -324,6 +350,14 @@
   }
 }
 
+:global(:root[data-theme="dark"]) .embedButton {
+  background: rgba(255, 255, 255, 0.06);
+
+  &:hover {
+    background: rgba(29, 155, 240, 0.15);
+  }
+}
+
 .embedButtonActive {
   background: rgba(29, 155, 240, 0.12);
   color: #1d9bf0;
@@ -341,17 +375,23 @@
   }
 }
 
+:global(:root[data-theme="dark"]) .embedButtonActive {
+  background: rgba(29, 155, 240, 0.2);
+
+  &:hover {
+    background: rgba(29, 155, 240, 0.25);
+  }
+}
+
 .similarityBadge {
   display: flex;
   align-items: center;
   gap: var(--space-1);
-  font-family: 'Golos Text', system-ui, sans-serif;
+  font-family: 'Instrument Sans', system-ui, sans-serif;
   font-size: 12px;
   font-weight: 500;
   color: var(--text-color-text-subtle);
   background: rgba(0, 0, 0, 0.04);
-  backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
   padding: var(--space-1) var(--space-2);
   border-radius: var(--radius-full);
 
@@ -359,6 +399,11 @@
     color: var(--text-color-text-subtle);
     background: rgba(255, 255, 255, 0.06);
   }
+}
+
+:global(:root[data-theme="dark"]) .similarityBadge {
+  color: var(--text-color-text-subtle);
+  background: rgba(255, 255, 255, 0.06);
 }
 
 .similarityIcon {

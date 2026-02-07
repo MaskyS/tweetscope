@@ -244,7 +244,7 @@ function FilterDataTable({
             zIndex: 9999,
             maxWidth: 'none',
             whiteSpace: 'nowrap',
-            backgroundColor: '#D3965E',
+            backgroundColor: '#3AA99F',
             position: 'fixed',
             marginTop: 10,
             top: -200,

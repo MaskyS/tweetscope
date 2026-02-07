@@ -78,13 +78,18 @@ const Container = () => {
     const { type, value, column } = selection;
 
     setUrlParams((prev) => {
+      prev.delete('cluster');
+      prev.delete('feature');
+      prev.delete('search');
+      prev.delete('column');
+      prev.delete('value');
       if (type === filterConstants.COLUMN) {
         prev.set('column', column);
         prev.set('value', value);
       } else {
         prev.set(type, value);
       }
-      return prev;
+      return new URLSearchParams(prev);
     });
   };
 

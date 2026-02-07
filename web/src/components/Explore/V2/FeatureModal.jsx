@@ -53,8 +53,8 @@ function FeatureModal({
                 className={styles.itemBackground}
                 style={{
                   width: getWidth(topActs[i]),
-                  borderBottom: hoveredIdx === i ? '2px solid #b87333' : 'none',
-                  backgroundColor: hoveredIdx === i ? '#b87333' : '#aaa',
+                  borderBottom: hoveredIdx === i ? '2px solid #1C6C66' : 'none',
+                  backgroundColor: hoveredIdx === i ? '#1C6C66' : '#878580',
                 }}
               />
               <div className={styles.featureLabel}>

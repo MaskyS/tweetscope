@@ -1,6 +1,11 @@
 .featureModal {
   width: 80vw !important;
   padding: 0;
+  background: var(--glass-bg-solid, rgba(255, 252, 240, 0.92)) !important;
+  backdrop-filter: blur(var(--glass-blur, 16px)) saturate(140%);
+  -webkit-backdrop-filter: blur(var(--glass-blur, 16px)) saturate(140%);
+  border: 1px solid var(--glass-border-subtle, rgba(40, 39, 38, 0.1));
+  box-shadow: var(--glass-shadow-hover, 0 8px 28px rgba(40, 39, 38, 0.16));
 }
 
 .header {
@@ -8,12 +13,12 @@
   justify-content: space-between;
   align-items: center;
   padding: 16px;
-  border-bottom: 1px solid #eee;
+  border-bottom: 1px solid var(--glass-border-subtle, rgba(40, 39, 38, 0.1));
 }
 
 .headerText {
   font-size: 1.1rem;
-  color: #333;
+  color: var(--text-color-text-main, #282726);
 }
 
 .content {
@@ -53,7 +58,7 @@
 
 .filterLink {
   cursor: pointer;
-  color: #666;
+  color: var(--text-color-text-subtle, #6f6e69);
   
   &:hover {
     text-decoration: underline;
@@ -61,8 +66,7 @@
 }
 
 .filterLabel {
-  color: #333;
+  color: var(--text-color-text-main, #282726);
 }
-
 
 

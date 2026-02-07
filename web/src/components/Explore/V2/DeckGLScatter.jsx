@@ -1,6 +1,6 @@
 import { useRef, useCallback, useState, useMemo, forwardRef, useImperativeHandle } from 'react';
 import DeckGL from '@deck.gl/react';
-import { ScatterplotLayer, TextLayer, PolygonLayer } from '@deck.gl/layers';
+import { ScatterplotLayer, TextLayer, PolygonLayer, PathLayer } from '@deck.gl/layers';
 import { OrthographicView, LinearInterpolator } from '@deck.gl/core';
 import { CanvasContext } from '@luma.gl/core';
 import PropTypes from 'prop-types';
@@ -123,6 +123,50 @@ function toNumber(value) {
   if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
   const num = Number(String(value).replace(/,/g, ''));
   return Number.isFinite(num) ? num : 0;
+}
+
+function toIntOrNull(value) {
+  if (value === undefined || value === null) return null;
+  const n = Number(value);
+  if (!Number.isFinite(n)) return null;
+  return Math.trunc(n);
+}
+
+function edgeBendSign(srcIdx, dstIdx) {
+  const seed = ((srcIdx * 73856093) ^ (dstIdx * 19349663)) >>> 0;
+  return seed % 2 === 0 ? 1 : -1;
+}
+
+function buildCurvedPath(sourcePosition, targetPosition, srcIdx, dstIdx, curvature = 0.14, steps = 8) {
+  const x0 = sourcePosition[0];
+  const y0 = sourcePosition[1];
+  const x1 = targetPosition[0];
+  const y1 = targetPosition[1];
+  const dx = x1 - x0;
+  const dy = y1 - y0;
+  const length = Math.sqrt(dx * dx + dy * dy);
+
+  if (!Number.isFinite(length) || length < 1e-6) {
+    return [sourcePosition, targetPosition];
+  }
+
+  const nx = -dy / length;
+  const ny = dx / length;
+  const sign = edgeBendSign(srcIdx, dstIdx);
+  const bend = clamp(length * curvature, 0.01, 0.18) * sign;
+  const cx = (x0 + x1) * 0.5 + nx * bend;
+  const cy = (y0 + y1) * 0.5 + ny * bend;
+
+  const path = [];
+  const segmentCount = Math.max(3, steps);
+  for (let i = 0; i <= segmentCount; i++) {
+    const t = i / segmentCount;
+    const mt = 1 - t;
+    const x = mt * mt * x0 + 2 * mt * t * cx + t * t * x1;
+    const y = mt * mt * y0 + 2 * mt * t * cy + t * t * y1;
+    path.push([x, y]);
+  }
+  return path;
 }
 
 function engagementScoreFromRow(row) {
@@ -303,6 +347,11 @@ const DeckGLScatter = forwardRef(function DeckGLScatter({
   showClusterOutlines = true,
   activeClusterId = null,
   featureIsSelected = false,
+  linkEdges = [],
+  showReplyEdges = true,
+  showQuoteEdges = true,
+  edgeWidthScale = 1,
+  highlightIndices = null,
 }, ref) {
   const { isDark: isDarkMode } = useColorMode();
   const { clusterLabels, scope, scopeRows } = useScope();
@@ -371,7 +420,20 @@ const DeckGLScatter = forwardRef(function DeckGLScatter({
       });
     },
     getViewState: () => controlledViewState ?? currentViewState,
-  }), [width, height, minZoom, maxZoom, controlledViewState]);
+    setViewState: (viewState, transitionDuration = 0) => {
+      if (!viewState) return;
+      const nextViewState = {
+        ...viewState,
+        minZoom,
+        maxZoom,
+      };
+      if (transitionDuration > 0) {
+        nextViewState.transitionDuration = transitionDuration;
+        nextViewState.transitionInterpolator = new LinearInterpolator(['target', 'zoom']);
+      }
+      setControlledViewState(nextViewState);
+    },
+  }), [width, height, minZoom, maxZoom, controlledViewState, currentViewState]);
 
   const pointCount = points.length;
 
@@ -460,6 +522,79 @@ const DeckGLScatter = forwardRef(function DeckGLScatter({
       ls_index: scopeRows?.[index]?.ls_index ?? index,
     }));
   }, [points, scopeRows]);
+
+  const highlightIndexSet = useMemo(() => {
+    if (!highlightIndices) return new Set();
+    if (highlightIndices instanceof Set) return highlightIndices;
+    return new Set(Array.isArray(highlightIndices) ? highlightIndices : []);
+  }, [highlightIndices]);
+
+  const lsIndexPositionMap = useMemo(() => {
+    const map = new Map();
+    if (!scopeRows?.length) return map;
+
+    for (let i = 0; i < scopeRows.length; i++) {
+      const row = scopeRows[i];
+      if (!row) continue;
+      const lsIndex = toIntOrNull(row.ls_index ?? i);
+      if (lsIndex === null) continue;
+      const x = Number(row.x);
+      const y = Number(row.y);
+      if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+      map.set(lsIndex, [x, y]);
+    }
+    return map;
+  }, [scopeRows]);
+
+  const { replyEdgeData, quoteEdgeData } = useMemo(() => {
+    const reply = [];
+    const quote = [];
+    if (!Array.isArray(linkEdges) || linkEdges.length === 0 || lsIndexPositionMap.size === 0) {
+      return { replyEdgeData: reply, quoteEdgeData: quote };
+    }
+
+    for (let i = 0; i < linkEdges.length; i++) {
+      const edge = linkEdges[i];
+      const srcIdx = toIntOrNull(edge?.src_ls_index);
+      const dstIdx = toIntOrNull(edge?.dst_ls_index);
+      if (srcIdx === null || dstIdx === null) continue;
+
+      const sourcePosition = lsIndexPositionMap.get(srcIdx);
+      const targetPosition = lsIndexPositionMap.get(dstIdx);
+      if (!sourcePosition || !targetPosition) continue;
+
+      const dx = targetPosition[0] - sourcePosition[0];
+      const dy = targetPosition[1] - sourcePosition[1];
+      const length = Math.sqrt(dx * dx + dy * dy);
+      if (!Number.isFinite(length) || length <= 0) continue;
+
+      const row = {
+        edgeType: String(edge?.edge_type || '').toLowerCase(),
+        length,
+        path: null,
+        color: null,
+        width: 1,
+      };
+
+      if (row.edgeType === 'reply') {
+        const alphaBase = isDarkMode ? 120 : 90;
+        const alpha = Math.round(alphaBase * clamp(1.04 - length * 0.22, 0.45, 1));
+        row.path = buildCurvedPath(sourcePosition, targetPosition, srcIdx, dstIdx, 0.09, 6);
+        row.color = isDarkMode ? [214, 206, 188, alpha] : [86, 72, 60, alpha];
+        row.width = clamp(1.0 - length * 0.05, 0.72, 1.0);
+        reply.push(row);
+      } else if (row.edgeType === 'quote') {
+        const alphaBase = isDarkMode ? 130 : 112;
+        const alpha = Math.round(alphaBase * clamp(1.0 - length * 0.18, 0.5, 1));
+        row.path = buildCurvedPath(sourcePosition, targetPosition, srcIdx, dstIdx, 0.16, 10);
+        row.color = isDarkMode ? [124, 186, 230, alpha] : [24, 97, 174, alpha];
+        row.width = clamp(1.08 - length * 0.04, 0.8, 1.08);
+        quote.push(row);
+      }
+    }
+
+    return { replyEdgeData: reply, quoteEdgeData: quote };
+  }, [linkEdges, lsIndexPositionMap, isDarkMode]);
 
   // Prepare label data for TextLayer with hierarchical support
   const labelData = useMemo(() => {
@@ -990,6 +1125,7 @@ const DeckGLScatter = forwardRef(function DeckGLScatter({
         getPosition: d => d.position,
         getRadius: d => {
           const isHovered = d.index === hoveredPointIndex;
+          const isHighlighted = highlightIndexSet.has(d.ls_index);
           let r = pointRadii[d.index] || 1.2;
 
           if (featureIsSelected && d.selectionKey === mapSelectionKey.selected && d.activation > 0) {
@@ -997,10 +1133,15 @@ const DeckGLScatter = forwardRef(function DeckGLScatter({
             r = clamp(r * activationBoost, 0.45, 28.0);
           }
 
+          if (isHighlighted) {
+            r = clamp(r * 1.35 + 0.6, 0.6, 34.0);
+          }
+
           return isHovered ? clamp(r + 2, 0.6, 34.0) : r;
         },
         getFillColor: d => {
           const isHovered = d.index === hoveredPointIndex;
+          const isHighlighted = highlightIndexSet.has(d.ls_index);
           const clusterColor = getClusterColor(d.cluster, 255, isDarkMode);
 
           let alpha = alphaScale.baseAlpha;
@@ -1017,21 +1158,32 @@ const DeckGLScatter = forwardRef(function DeckGLScatter({
             alpha = clamp(Math.round(120 + d.activation * 135), alpha, 255);
           }
 
+          if (isHighlighted) {
+            alpha = Math.max(alpha, 220);
+          }
+
           if (isHovered) alpha = 255;
 
           return [clusterColor[0], clusterColor[1], clusterColor[2], alpha];
         },
         getLineColor: d => {
           const isHovered = d.index === hoveredPointIndex;
-          if (!isHovered) return [0, 0, 0, 0];
+          const isHighlighted = highlightIndexSet.has(d.ls_index);
+          if (!isHovered && !isHighlighted) return [0, 0, 0, 0];
+          if (isHighlighted) {
+            return isDarkMode ? [143, 206, 237, 250] : [24, 97, 174, 246];
+          }
           return isDarkMode ? [242, 240, 229, 240] : [16, 15, 15, 230];
         },
-        getLineWidth: d => (d.index === hoveredPointIndex ? 2 : 0),
+        getLineWidth: d => {
+          if (d.index === hoveredPointIndex) return 2;
+          return highlightIndexSet.has(d.ls_index) ? 1.4 : 0;
+        },
         updateTriggers: {
-          getRadius: [hoveredPointIndex, pointRadii, featureIsSelected],
-          getFillColor: [hoveredPointIndex, featureIsSelected, alphaScale],
-          getLineColor: [hoveredPointIndex],
-          getLineWidth: [hoveredPointIndex],
+          getRadius: [hoveredPointIndex, pointRadii, featureIsSelected, highlightIndexSet],
+          getFillColor: [hoveredPointIndex, featureIsSelected, alphaScale, highlightIndexSet],
+          getLineColor: [hoveredPointIndex, highlightIndexSet, isDarkMode],
+          getLineWidth: [hoveredPointIndex, highlightIndexSet],
         },
       })
     );
@@ -1053,7 +1205,56 @@ const DeckGLScatter = forwardRef(function DeckGLScatter({
       );
     }
 
-    // 3. Text Layer for cluster labels with deterministic truncation on overlap
+    // 3. Link edges (render above points/hulls so they are clearly visible)
+    if (showReplyEdges && replyEdgeData.length > 0) {
+      layerList.push(
+        new PathLayer({
+          id: 'reply-edges-layer',
+          data: replyEdgeData,
+          pickable: false,
+          getPath: (d) => d.path,
+          getColor: (d) => d.color,
+          getWidth: (d) => d.width,
+          widthUnits: 'pixels',
+          widthScale: edgeWidthScale,
+          widthMinPixels: 0.5,
+          widthMaxPixels: 2.8,
+          rounded: true,
+          capRounded: true,
+          jointRounded: true,
+          visible: showReplyEdges,
+          updateTriggers: {
+            getWidth: [edgeWidthScale],
+          },
+        })
+      );
+    }
+
+    if (showQuoteEdges && quoteEdgeData.length > 0) {
+      layerList.push(
+        new PathLayer({
+          id: 'quote-edges-layer',
+          data: quoteEdgeData,
+          pickable: false,
+          getPath: (d) => d.path,
+          getColor: (d) => d.color,
+          getWidth: (d) => d.width,
+          widthUnits: 'pixels',
+          widthScale: edgeWidthScale,
+          widthMinPixels: 0.6,
+          widthMaxPixels: 3.4,
+          rounded: true,
+          capRounded: true,
+          jointRounded: true,
+          visible: showQuoteEdges,
+          updateTriggers: {
+            getWidth: [edgeWidthScale],
+          },
+        })
+      );
+    }
+
+    // 4. Text Layer for cluster labels with deterministic truncation on overlap
     if (placedLabels.length > 0) {
       layerList.push(
         new TextLayer({
@@ -1080,9 +1281,10 @@ const DeckGLScatter = forwardRef(function DeckGLScatter({
               String(d?.cluster) === String(activeClusterId);
             const alpha = Number.isFinite(d?.alpha) ? d.alpha : 230;
             if (isActive) {
-              return isDarkMode ? [255, 255, 255, 255] : [16, 15, 15, 255];
+              const [r, g, b] = getClusterToneColor(d.cluster, isDarkMode);
+              return [r, g, b, 252];
             }
-            return isDarkMode ? [255, 255, 255, alpha] : [40, 40, 40, alpha];
+            return isDarkMode ? [242, 240, 229, alpha] : [40, 39, 38, alpha];
           },
           getAngle: 0,
           fontFamily: 'Instrument Serif, Georgia, serif',
@@ -1095,16 +1297,8 @@ const DeckGLScatter = forwardRef(function DeckGLScatter({
           // Background for better readability (like datamapplot)
           background: true,
           getBackgroundColor: d => {
-            const isActive =
-              activeClusterId !== null &&
-              activeClusterId !== undefined &&
-              String(d?.cluster) === String(activeClusterId);
             const alpha = Number.isFinite(d?.backgroundAlpha) ? d.backgroundAlpha : 64;
-            if (isActive) {
-              const [r, g, b] = getClusterToneColor(d.cluster, isDarkMode);
-              const activeAlpha = isDarkMode ? clamp(alpha + 46, 92, 168) : clamp(alpha + 34, 82, 144);
-              return [r, g, b, activeAlpha];
-            }
+            // Keep chip backgrounds neutral; active state is expressed via text color.
             return isDarkMode ? [52, 51, 49, alpha] : [230, 228, 217, alpha];
           },
           backgroundPadding: [8, 5, 8, 5],
@@ -1125,6 +1319,11 @@ const DeckGLScatter = forwardRef(function DeckGLScatter({
 
     return layerList;
   }, [
+    edgeWidthScale,
+    showReplyEdges,
+    showQuoteEdges,
+    replyEdgeData,
+    quoteEdgeData,
     scatterData,
     hullData,
     placedLabels,
@@ -1134,6 +1333,7 @@ const DeckGLScatter = forwardRef(function DeckGLScatter({
     featureIsSelected,
     pointRadii,
     alphaScale,
+    highlightIndexSet,
     onLabelClick,
     showClusterOutlines,
     activeClusterId,
@@ -1197,6 +1397,14 @@ DeckGLScatter.propTypes = {
   showClusterOutlines: PropTypes.bool,
   activeClusterId: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
   featureIsSelected: PropTypes.bool,
+  linkEdges: PropTypes.array,
+  showReplyEdges: PropTypes.bool,
+  showQuoteEdges: PropTypes.bool,
+  edgeWidthScale: PropTypes.number,
+  highlightIndices: PropTypes.oneOfType([
+    PropTypes.array,
+    PropTypes.instanceOf(Set),
+  ]),
 };
 
 export default DeckGLScatter;

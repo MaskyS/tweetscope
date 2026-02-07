@@ -67,4 +67,5 @@ export const filterConstants = {
   CLUSTER: 'cluster',
   FEATURE: 'feature',
   COLUMN: 'column',
+  TIME_RANGE: 'timeRange',
 };

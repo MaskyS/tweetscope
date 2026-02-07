@@ -51,13 +51,17 @@
   background: rgba(0, 0, 0, 0.02);
   border: 1px solid var(--glass-border-subtle);
   border-radius: var(--radius-md);
-  font-family: 'Golos Text', system-ui, sans-serif;
+  font-family: 'Instrument Sans', system-ui, sans-serif;
   font-size: 13px;
   color: var(--text-color-text-subtle);
 
   @media (prefers-color-scheme: dark) {
     background: rgba(255, 255, 255, 0.03);
   }
+}
+
+:global(:root[data-theme="dark"]) .loadingState {
+  background: rgba(255, 255, 255, 0.03);
 }
 
 .spinner {
@@ -86,13 +90,17 @@
   background: rgba(0, 0, 0, 0.02);
   border: 1px solid var(--glass-border-subtle);
   border-radius: var(--radius-md);
-  font-family: 'Golos Text', system-ui, sans-serif;
+  font-family: 'Instrument Sans', system-ui, sans-serif;
   font-size: 13px;
   color: var(--text-color-text-subtle);
 
   @media (prefers-color-scheme: dark) {
     background: rgba(255, 255, 255, 0.03);
   }
+}
+
+:global(:root[data-theme="dark"]) .errorState {
+  background: rgba(255, 255, 255, 0.03);
 }
 
 .fallbackLink {

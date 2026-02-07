@@ -5,7 +5,11 @@ import { apiService } from '@/lib/apiService';
 const ROWS_PER_PAGE = 30;
 const PREFETCH_RANGE = 2; // Fetch columns within focusedIndex +/- this range
 
-export default function useCarouselData(focusedClusterIndex) {
+const EMPTY_CLUSTERS = [];
+const EMPTY_MAPPING = { clusterToTopLevel: {}, indicesByTopLevel: {} };
+const EMPTY_ROWS_MAP = {};
+
+export default function useCarouselData(focusedClusterIndex, enabled = true) {
   const { clusterHierarchy, scopeRows, dataset, scope, clusterMap } = useScope();
 
   // Per-column state: { [clusterIndex]: { rows: [], page: 0, loading: false, hasMore: true } }
@@ -13,16 +17,20 @@ export default function useCarouselData(focusedClusterIndex) {
   const [activeSubClusters, setActiveSubClusters] = useState({}); // { [columnIndex]: subClusterId | null }
   const fetchedRef = useRef(new Set()); // Track which columns we've initiated fetches for
 
+  // Ref for columnData so loadMore doesn't depend on it
+  const columnDataRef = useRef(columnData);
+  columnDataRef.current = columnData;
+
   // Extract top-level clusters (roots of the hierarchy)
   const topLevelClusters = useMemo(() => {
-    if (!clusterHierarchy?.children) return [];
+    if (!clusterHierarchy?.children) return EMPTY_CLUSTERS;
     return clusterHierarchy.children;
   }, [clusterHierarchy]);
 
   // Build a mapping: for each scopeRow cluster id → which top-level cluster it belongs to
   const { clusterToTopLevel, indicesByTopLevel } = useMemo(() => {
-    if (!topLevelClusters.length || !scopeRows?.length) {
-      return { clusterToTopLevel: {}, indicesByTopLevel: {} };
+    if (!enabled || !topLevelClusters.length || !scopeRows?.length) {
+      return EMPTY_MAPPING;
     }
 
     const c2tl = {}; // cluster id → top-level cluster id
@@ -63,7 +71,7 @@ export default function useCarouselData(focusedClusterIndex) {
     }
 
     return { clusterToTopLevel: c2tl, indicesByTopLevel: indicesByTL };
-  }, [topLevelClusters, scopeRows]);
+  }, [enabled, topLevelClusters, scopeRows]);
 
   // Fetch column data for a given column index
   const fetchColumnData = useCallback(
@@ -133,19 +141,19 @@ export default function useCarouselData(focusedClusterIndex) {
     [topLevelClusters, indicesByTopLevel, dataset, scope]
   );
 
-  // Load more for a specific column
+  // Load more for a specific column — uses ref to avoid dep on columnData
   const loadMore = useCallback(
     (columnIndex) => {
-      const col = columnData[columnIndex];
+      const col = columnDataRef.current[columnIndex];
       if (!col || col.loading || !col.hasMore) return;
       fetchColumnData(columnIndex, (col.page || 0) + 1);
     },
-    [columnData, fetchColumnData]
+    [fetchColumnData]
   );
 
-  // Lazy-load columns near the focused index
+  // Lazy-load columns near the focused index (gated by enabled)
   useEffect(() => {
-    if (!topLevelClusters.length || !dataset) return;
+    if (!enabled || !topLevelClusters.length || !dataset) return;
 
     const start = Math.max(0, focusedClusterIndex - PREFETCH_RANGE);
     const end = Math.min(topLevelClusters.length - 1, focusedClusterIndex + PREFETCH_RANGE);
@@ -156,7 +164,7 @@ export default function useCarouselData(focusedClusterIndex) {
         fetchColumnData(i, 0);
       }
     }
-  }, [focusedClusterIndex, topLevelClusters, dataset, fetchColumnData]);
+  }, [enabled, focusedClusterIndex, topLevelClusters, dataset, fetchColumnData]);
 
   // Reset when hierarchy changes
   useEffect(() => {
@@ -173,28 +181,27 @@ export default function useCarouselData(focusedClusterIndex) {
     }));
   }, []);
 
-  // Get filtered rows for a column (respects sub-cluster filter)
-  const getColumnRows = useCallback(
-    (columnIndex) => {
-      const col = columnData[columnIndex];
-      if (!col?.rows) return [];
-
-      const activeSubCluster = activeSubClusters[columnIndex];
-      if (!activeSubCluster) return col.rows;
-
-      // Filter to only rows whose cluster matches the sub-cluster
-      return col.rows.filter((row) => {
+  // Pre-computed per-column rows map — referentially stable per column
+  const columnRowsMap = useMemo(() => {
+    if (!enabled) return EMPTY_ROWS_MAP;
+    const map = {};
+    for (const [indexStr, col] of Object.entries(columnData)) {
+      const index = Number(indexStr);
+      if (!col?.rows) { map[index] = []; continue; }
+      const activeSubCluster = activeSubClusters[index];
+      if (!activeSubCluster) { map[index] = col.rows; continue; }
+      map[index] = col.rows.filter((row) => {
         const info = clusterMap[row.ls_index];
         return info?.cluster === activeSubCluster;
       });
-    },
-    [columnData, activeSubClusters, clusterMap]
-  );
+    }
+    return map;
+  }, [enabled, columnData, activeSubClusters, clusterMap]);
 
   return {
     topLevelClusters,
     columnData,
-    getColumnRows,
+    columnRowsMap,
     loadMore,
     activeSubClusters,
     setSubClusterFilter,

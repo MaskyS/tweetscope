@@ -1,12 +1,24 @@
 
 .scatter {
   position: absolute;
-  background-color: #fefefe;
+  background-color: var(--viz-map-background, #fffcf0);
   user-select: none;
 }
 
 @media (prefers-color-scheme: dark) {
   .scatter {
-    background-color: #111;
+    background-color: var(--viz-map-background, #100f0f);
+  }
+}
+
+:global(:root[data-theme="light"]) {
+  .scatter {
+    background-color: var(--viz-map-background, #fffcf0);
+  }
+}
+
+:global(:root[data-theme="dark"]) {
+  .scatter {
+    background-color: var(--viz-map-background, #100f0f);
   }
 }

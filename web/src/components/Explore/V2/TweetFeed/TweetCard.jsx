@@ -1,10 +1,11 @@
 import { useState, useEffect, useRef, memo, useMemo } from 'react';
 import PropTypes from 'prop-types';
 import { Heart, Repeat2, ExternalLink, Twitter } from 'lucide-react';
-import { getClusterColorCSS } from '../DeckGLScatter';
+import { getClusterColorCSS, getClusterColorRGBA } from '../DeckGLScatter';
 import { useColorMode } from '../../../../hooks/useColorMode';
 import { urlResolver } from '../../../../lib/urlResolver';
 import TwitterEmbed from './TwitterEmbed';
+import ConnectionBadges from '../ConnectionBadges';
 import styles from './TweetCard.module.scss';
 
 // Extract t.co links from text
@@ -66,6 +67,9 @@ TweetCard.propTypes = {
   onHover: PropTypes.func,
   onClick: PropTypes.func,
   showFeatures: PropTypes.bool,
+  nodeStats: PropTypes.object,
+  onViewThread: PropTypes.func,
+  onViewQuotes: PropTypes.func,
 };
 
 function TweetCard({
@@ -78,6 +82,9 @@ function TweetCard({
   onHover,
   onClick,
   showFeatures = false,
+  nodeStats,
+  onViewThread,
+  onViewQuotes,
 }) {
   const [expanded, setExpanded] = useState(false);
   const [showFullEmbed, setShowFullEmbed] = useState(false);
@@ -87,7 +94,7 @@ function TweetCard({
   const [hasResolved, setHasResolved] = useState(false);
   const cardRef = useRef(null);
   const isMountedRef = useRef(true);
-  const { colorMode } = useColorMode();
+  const { colorMode, isDark: isDarkMode } = useColorMode();
 
   // Track mount state
   useEffect(() => {
@@ -123,35 +130,23 @@ function TweetCard({
 
     setHasResolved(true);
 
-    console.log('[TweetCard] Resolving t.co links:', tcoLinks);
-
     urlResolver.resolve(tcoLinks)
       .then((results) => {
-        console.log('[TweetCard] .then() called, isMounted=', isMountedRef.current, 'results=', results);
         if (!isMountedRef.current) return;
-        console.log('[TweetCard] URL resolution results:', JSON.stringify(results, null, 2));
 
         // Filter images
         const media = results.filter(
           (r) => r.type === 'image' && r.media_url && !r.error
         );
-        console.log('[TweetCard] Filtered media:', media);
         setResolvedMedia(media);
 
         // Filter quoted tweets
         const quotes = results.filter(
           (r) => r.type === 'quote' && r.media_url && !r.error
         );
-        console.log('[TweetCard] Filtered quotes:', quotes);
-        console.log('[TweetCard] Quote media_urls (should be strings):', quotes.map(q => ({
-          media_url: q.media_url,
-          type: typeof q.media_url,
-          final: q.final
-        })));
         setQuotedTweets(quotes);
       })
-      .catch((err) => {
-        console.error('[TweetCard] URL resolution error:', err);
+      .catch(() => {
         if (isMountedRef.current) {
           setResolvedMedia([]);
           setQuotedTweets([]);
@@ -160,7 +155,17 @@ function TweetCard({
   }, [isVisible, hasResolved, tcoLinks]);
   const clusterNumber = clusterInfo?.cluster ?? 0;
   const clusterLabel = clusterInfo?.label || `Cluster ${clusterNumber}`;
-  const avatarColor = getClusterColorCSS(clusterNumber);
+  const avatarColor = getClusterColorCSS(clusterNumber, isDarkMode);
+
+  // Cluster-aware highlight: use the cluster's own color for the highlight tint
+  const highlightStyle = useMemo(() => {
+    if (!isHighlighted) return undefined;
+    const rgba = getClusterColorRGBA(clusterNumber, isDarkMode);
+    return {
+      '--highlight-bg': `rgba(${rgba[0]}, ${rgba[1]}, ${rgba[2]}, ${isDarkMode ? 0.06 : 0.08})`,
+      '--highlight-gradient': `rgba(${rgba[0]}, ${rgba[1]}, ${rgba[2]}, 0.06)`,
+    };
+  }, [isHighlighted, clusterNumber, isDarkMode]);
 
   // Tweet metadata
   const username = row.username;
@@ -216,6 +221,7 @@ function TweetCard({
     <div
       ref={cardRef}
       className={`${styles.tweetCard} ${isHighlighted ? styles.tweetCardHighlighted : ''}`}
+      style={highlightStyle}
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
       onClick={handleClick}
@@ -326,6 +332,15 @@ function TweetCard({
                 <Repeat2 size={14} className={styles.metricIcon} />
                 <span>{formatCount(retweets)}</span>
               </div>
+            )}
+
+            {/* Connection badges */}
+            {nodeStats && (
+              <ConnectionBadges
+                stats={nodeStats}
+                onViewThread={onViewThread}
+                onViewQuotes={onViewQuotes}
+              />
             )}
 
             {/* Twitter link */}

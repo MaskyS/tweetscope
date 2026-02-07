@@ -1,8 +1,8 @@
-import { useState } from 'react';
+import { useState, memo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import styles from './TabHeader.module.scss';
 
-export default function TabHeader({
+function TabHeader({
   clusters,
   scrollX,
   columnWidth,
@@ -73,3 +73,5 @@ export default function TabHeader({
     </div>
   );
 }
+
+export default memo(TabHeader);

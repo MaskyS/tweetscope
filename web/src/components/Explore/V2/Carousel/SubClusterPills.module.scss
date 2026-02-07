@@ -22,7 +22,7 @@
   background: rgba(0, 0, 0, 0.04);
   border: 1px solid var(--glass-border-subtle);
   border-radius: var(--radius-full);
-  font-family: 'Golos Text', system-ui, sans-serif;
+  font-family: 'Instrument Sans', system-ui, sans-serif;
   font-size: 12px;
   font-weight: 500;
   color: var(--text-color-text-subtle);
@@ -37,8 +37,8 @@
   }
 
   &.active {
-    background: rgba(184, 115, 51, 0.12);
-    border-color: rgba(184, 115, 51, 0.25);
+    background: rgba(36, 131, 123, 0.12);
+    border-color: rgba(36, 131, 123, 0.25);
     color: var(--interactions---primary-color-interaction-primary);
     font-weight: 600;
   }
@@ -51,8 +51,21 @@
     }
 
     &.active {
-      background: rgba(184, 115, 51, 0.18);
-      border-color: rgba(184, 115, 51, 0.3);
+      background: rgba(36, 131, 123, 0.18);
+      border-color: rgba(36, 131, 123, 0.3);
+    }
+  }
+
+  :global(:root[data-theme="dark"]) & {
+    background: rgba(255, 255, 255, 0.06);
+
+    &:hover {
+      background: rgba(255, 255, 255, 0.1);
+    }
+
+    &.active {
+      background: rgba(36, 131, 123, 0.18);
+      border-color: rgba(36, 131, 123, 0.3);
     }
   }
 }
@@ -72,7 +85,7 @@
   color: var(--text-color-text-subtle);
 
   .active & {
-    background: rgba(184, 115, 51, 0.15);
+    background: rgba(36, 131, 123, 0.15);
     color: var(--interactions---primary-color-interaction-primary);
   }
 
@@ -80,7 +93,15 @@
     background: rgba(255, 255, 255, 0.08);
 
     .active & {
-      background: rgba(184, 115, 51, 0.22);
+      background: rgba(36, 131, 123, 0.22);
+    }
+  }
+
+  :global(:root[data-theme="dark"]) & {
+    background: rgba(255, 255, 255, 0.08);
+
+    .active & {
+      background: rgba(36, 131, 123, 0.22);
     }
   }
 }

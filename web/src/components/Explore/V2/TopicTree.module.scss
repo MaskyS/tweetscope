@@ -4,23 +4,18 @@
   background: transparent;
 }
 
-/* Sticky search bar - sticks to top of parent scroll container */
+/* Search bar — flush row inside the glass sidebar */
 .searchBar {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  padding: var(--space-3) var(--space-4);
-  background: var(--glass-bg-solid);
-  backdrop-filter: blur(var(--glass-blur));
-  -webkit-backdrop-filter: blur(var(--glass-blur));
-  border: 1px solid var(--glass-border-subtle);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--glass-shadow);
+  padding: var(--space-2) var(--space-4);
+  background: transparent;
+  border-bottom: 1px solid var(--glass-border-subtle);
   position: sticky;
   top: 0;
   z-index: 10;
   flex-shrink: 0;
-  margin-bottom: var(--space-2);
 }
 
 .searchInputWrapper {
@@ -33,34 +28,18 @@
 
 .searchInput {
   flex: 1;
-  padding: var(--space-2) var(--space-3);
-  font-family: 'Golos Text', system-ui, sans-serif;
+  padding: var(--space-2) 0;
+  font-family: 'Instrument Sans', system-ui, sans-serif;
   font-size: 13px;
   font-weight: 400;
   color: var(--text-color-text-main);
-  background: rgba(0, 0, 0, 0.04);
-  border: 1px solid var(--glass-border-subtle);
-  border-radius: var(--radius-sm);
+  background: transparent;
+  border: none;
   outline: none;
-  transition: all var(--transition-fast);
 
   &::placeholder {
     color: var(--text-color-text-subtle);
-    opacity: 0.6;
-  }
-
-  &:focus {
-    background: rgba(255, 255, 255, 0.5);
-    border-color: var(--interactions---primary-color-interaction-primary);
-    box-shadow: 0 0 0 2px rgba(184, 115, 51, 0.1);
-  }
-
-  @media (prefers-color-scheme: dark) {
-    background: rgba(255, 255, 255, 0.06);
-
-    &:focus {
-      background: rgba(255, 255, 255, 0.1);
-    }
+    opacity: 0.5;
   }
 }
 
@@ -69,19 +48,24 @@
   align-items: center;
   gap: var(--space-2);
   padding: var(--space-1) var(--space-2);
-  background: rgba(184, 115, 51, 0.12);
-  border: 1px solid rgba(184, 115, 51, 0.2);
+  background: var(--selected-tag-bg, rgba(36, 131, 123, 0.12));
+  border: 1px solid var(--selected-tag-border, rgba(36, 131, 123, 0.2));
   border-radius: var(--radius-sm);
-  font-family: 'Golos Text', system-ui, sans-serif;
+  font-family: 'Instrument Sans', system-ui, sans-serif;
   font-size: 13px;
   font-weight: 500;
-  color: var(--interactions---primary-color-interaction-primary);
+  color: var(--selected-tag-color, var(--interactions---primary-color-interaction-primary));
   max-width: 280px;
 
   @media (prefers-color-scheme: dark) {
-    background: rgba(184, 115, 51, 0.18);
-    border-color: rgba(184, 115, 51, 0.3);
+    background: var(--selected-tag-bg, rgba(36, 131, 123, 0.18));
+    border-color: var(--selected-tag-border, rgba(36, 131, 123, 0.3));
   }
+}
+
+:global(:root[data-theme="dark"]) .selectedTag {
+  background: var(--selected-tag-bg, rgba(36, 131, 123, 0.18));
+  border-color: var(--selected-tag-border, rgba(36, 131, 123, 0.3));
 }
 
 .tagLabel {
@@ -100,33 +84,41 @@
   height: 20px;
   padding: 0;
   margin-left: var(--space-2);
-  background: rgba(184, 115, 51, 0.2);
+  background: var(--selected-tag-clear-bg, rgba(36, 131, 123, 0.2));
   border: none;
   border-radius: var(--radius-full);
   font-size: 14px;
   font-weight: 600;
   line-height: 1;
-  color: var(--interactions---primary-color-interaction-primary);
+  color: var(--selected-tag-color, var(--interactions---primary-color-interaction-primary));
   cursor: pointer;
   transition: all var(--transition-fast);
   flex-shrink: 0;
 
   &:hover {
-    background: rgba(184, 115, 51, 0.35);
+    background: var(--selected-tag-clear-hover-bg, rgba(36, 131, 123, 0.35));
     transform: scale(1.1);
   }
 
   @media (prefers-color-scheme: dark) {
-    background: rgba(184, 115, 51, 0.25);
+    background: var(--selected-tag-clear-bg, rgba(36, 131, 123, 0.25));
 
     &:hover {
-      background: rgba(184, 115, 51, 0.4);
+      background: var(--selected-tag-clear-hover-bg, rgba(36, 131, 123, 0.4));
     }
   }
 }
 
+:global(:root[data-theme="dark"]) .tagClear {
+  background: var(--selected-tag-clear-bg, rgba(36, 131, 123, 0.25));
+
+  &:hover {
+    background: var(--selected-tag-clear-hover-bg, rgba(36, 131, 123, 0.4));
+  }
+}
+
 .resultCount {
-  font-family: 'Golos Text', system-ui, sans-serif;
+  font-family: 'Instrument Sans', system-ui, sans-serif;
   font-size: 12px;
   font-weight: 400;
   color: var(--text-color-text-subtle);
@@ -141,39 +133,28 @@
   width: 28px;
   height: 28px;
   padding: 0;
-  background: rgba(0, 0, 0, 0.04);
-  border: 1px solid var(--glass-border-subtle);
-  border-radius: var(--radius-sm);
+  background: transparent;
+  border: none;
   font-size: 10px;
   color: var(--text-color-text-subtle);
   cursor: pointer;
   flex-shrink: 0;
-  transition: all var(--transition-fast);
+  transition: color var(--transition-fast);
 
   &:hover {
-    background: rgba(0, 0, 0, 0.08);
     color: var(--text-color-text-main);
-  }
-
-  @media (prefers-color-scheme: dark) {
-    background: rgba(255, 255, 255, 0.06);
-
-    &:hover {
-      background: rgba(255, 255, 255, 0.1);
-    }
   }
 }
 
+/* Topic tree list — flat section inside sidebar */
 .treeContainer {
   max-height: 200px;
   overflow-y: auto;
-  padding: var(--space-2) 0;
-  background: var(--glass-bg);
-  border: 1px solid var(--glass-border-subtle);
-  border-radius: var(--radius-lg);
-  margin-bottom: var(--space-3);
+  padding: var(--space-1) 0;
+  background: transparent;
+  border-bottom: 1px solid var(--glass-border-subtle);
 
-  /* Custom scrollbar for glass aesthetic */
+  /* Custom scrollbar */
   &::-webkit-scrollbar {
     width: 6px;
   }
@@ -202,6 +183,16 @@
   }
 }
 
+:global(:root[data-theme="dark"]) .treeContainer {
+  &::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.12);
+
+    &:hover {
+      background: rgba(255, 255, 255, 0.2);
+    }
+  }
+}
+
 .treeNode {
   /* Node container for animation purposes */
 }
@@ -218,22 +209,8 @@
   transition: all var(--transition-fast);
   position: relative;
 
-  &::before {
-    content: '';
-    position: absolute;
-    inset: 0;
-    border-radius: var(--radius-sm);
-    opacity: 0;
-    background: linear-gradient(135deg, rgba(255, 255, 255, 0.15), rgba(255, 255, 255, 0.05));
-    transition: opacity var(--transition-fast);
-  }
-
   &:hover {
     background: rgba(0, 0, 0, 0.04);
-
-    &::before {
-      opacity: 1;
-    }
 
     @media (prefers-color-scheme: dark) {
       background: rgba(255, 255, 255, 0.06);
@@ -241,20 +218,15 @@
   }
 
   &.selected {
-    background: rgba(184, 115, 51, 0.12);
-
-    &::before {
-      opacity: 1;
-      background: linear-gradient(135deg, rgba(184, 115, 51, 0.08), rgba(184, 115, 51, 0.02));
-    }
+    background: var(--cluster-selected-bg, rgba(36, 131, 123, 0.12));
 
     .label {
       font-weight: 600;
-      color: var(--interactions---primary-color-interaction-primary);
+      color: var(--cluster-accent, var(--interactions---primary-color-interaction-primary));
     }
 
     @media (prefers-color-scheme: dark) {
-      background: rgba(184, 115, 51, 0.18);
+      background: var(--cluster-selected-bg, rgba(36, 131, 123, 0.18));
     }
   }
 
@@ -262,26 +234,34 @@
     opacity: 0.35;
   }
 
-  // Magic Ink: Context sensitivity - highlight when user hovers a point in this cluster
+  // Magic Ink: highlight when user hovers a point in this cluster
   &.hoveredFromScatter {
-    background: rgba(139, 207, 102, 0.18);
-    box-shadow: 0 0 0 1px rgba(139, 207, 102, 0.35) inset;
-
-    &::before {
-      opacity: 1;
-      background: linear-gradient(135deg, rgba(139, 207, 102, 0.12), rgba(139, 207, 102, 0.04));
-    }
+    background: var(--cluster-hover-bg, rgba(36, 131, 123, 0.18));
+    box-shadow: 0 0 0 1px var(--cluster-ring, rgba(36, 131, 123, 0.35)) inset;
 
     .label {
       font-weight: 600;
-      color: var(--semantic-color-semantic-success-active);
+      color: var(--cluster-accent, var(--interactions---primary-color-interaction-primary));
     }
 
     @media (prefers-color-scheme: dark) {
-      background: rgba(139, 207, 102, 0.14);
-      box-shadow: 0 0 0 1px rgba(139, 207, 102, 0.25) inset;
+      background: var(--cluster-hover-bg, rgba(36, 131, 123, 0.14));
+      box-shadow: 0 0 0 1px var(--cluster-ring, rgba(36, 131, 123, 0.25)) inset;
     }
   }
+}
+
+:global(:root[data-theme="dark"]) .treeItem:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+:global(:root[data-theme="dark"]) .treeItem.selected {
+  background: var(--cluster-selected-bg, rgba(36, 131, 123, 0.18));
+}
+
+:global(:root[data-theme="dark"]) .treeItem.hoveredFromScatter {
+  background: var(--cluster-hover-bg, rgba(36, 131, 123, 0.14));
+  box-shadow: 0 0 0 1px var(--cluster-ring, rgba(36, 131, 123, 0.25)) inset;
 }
 
 .expandBtn {
@@ -310,6 +290,10 @@
   }
 }
 
+:global(:root[data-theme="dark"]) .expandBtn:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
 .expandPlaceholder {
   width: 20px;
   flex-shrink: 0;
@@ -317,7 +301,7 @@
 
 .label {
   flex: 1;
-  font-family: 'Golos Text', system-ui, sans-serif;
+  font-family: 'Instrument Sans', system-ui, sans-serif;
   font-size: 13px;
   font-weight: 500;
   line-height: 1.4;
@@ -329,7 +313,7 @@
 }
 
 .count {
-  font-family: 'Golos Text', system-ui, sans-serif;
+  font-family: 'Instrument Sans', system-ui, sans-serif;
   font-size: 12px;
   font-weight: 400;
   color: var(--text-color-text-subtle);
@@ -339,23 +323,26 @@
 }
 
 .layer {
-  font-family: 'Golos Text', system-ui, sans-serif;
+  font-family: 'Instrument Sans', system-ui, sans-serif;
   font-size: 10px;
   font-weight: 500;
   color: var(--interactions---primary-color-interaction-primary);
-  background: rgba(184, 115, 51, 0.1);
+  background: rgba(36, 131, 123, 0.1);
   padding: 2px 8px;
   border-radius: var(--radius-full);
   flex-shrink: 0;
   letter-spacing: 0.02em;
 
   @media (prefers-color-scheme: dark) {
-    background: rgba(184, 115, 51, 0.18);
+    background: rgba(36, 131, 123, 0.18);
   }
 }
 
+:global(:root[data-theme="dark"]) .layer {
+  background: rgba(36, 131, 123, 0.18);
+}
+
 .treeChildren {
-  /* Children container - inherits animation */
   animation: slideIn 0.15s ease-out;
 }
 
@@ -373,7 +360,7 @@
 .empty {
   padding: var(--space-5);
   text-align: center;
-  font-family: 'Golos Text', system-ui, sans-serif;
+  font-family: 'Instrument Sans', system-ui, sans-serif;
   font-size: 13px;
   font-weight: 400;
   color: var(--text-color-text-subtle);

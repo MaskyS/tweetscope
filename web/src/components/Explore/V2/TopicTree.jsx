@@ -2,7 +2,9 @@ import { useState, useCallback, useMemo, useEffect } from 'react';
 import PropTypes from 'prop-types';
 import { useScope } from '@/contexts/ScopeContext';
 import { useFilter } from '@/contexts/FilterContext';
+import { useColorMode } from '@/hooks/useColorMode';
 import { filterConstants } from './Search/utils';
+import { getClusterColorRGBA } from './DeckGLScatter';
 import styles from './TopicTree.module.scss';
 
 TopicTree.propTypes = {
@@ -21,7 +23,16 @@ function TopicTree({
   hoveredCluster = null,
 }) {
   const { clusterHierarchy, clusterLabels, scope, scopeRows } = useScope();
-  const { clusterFilter, setFilterConfig, setFilterActive, filteredIndices } = useFilter();
+  const {
+    clusterFilter,
+    filterConfig,
+    setFilterConfig,
+    setFilterActive,
+    setFilterQuery,
+    setUrlParams,
+    filteredIndices,
+  } = useFilter();
+  const { isDark: isDarkMode } = useColorMode();
 
   const [expandedNodes, setExpandedNodes] = useState(new Set());
   const [internalSelectedCluster, setInternalSelectedCluster] = useState(null);
@@ -30,6 +41,33 @@ function TopicTree({
   const [isExpanded, setIsExpanded] = useState(false);
 
   const isHierarchical = scope?.hierarchical_labels;
+
+  const buildClusterStyle = useCallback((clusterId, extraStyles = {}) => {
+    const [r, g, b] = getClusterColorRGBA(clusterId, isDarkMode);
+    const alphaSelected = isDarkMode ? 0.24 : 0.16;
+    const alphaHover = isDarkMode ? 0.2 : 0.14;
+    const alphaRing = isDarkMode ? 0.58 : 0.42;
+
+    return {
+      '--cluster-accent': `rgb(${r}, ${g}, ${b})`,
+      '--cluster-selected-bg': `rgba(${r}, ${g}, ${b}, ${alphaSelected})`,
+      '--cluster-hover-bg': `rgba(${r}, ${g}, ${b}, ${alphaHover})`,
+      '--cluster-ring': `rgba(${r}, ${g}, ${b}, ${alphaRing})`,
+      ...extraStyles,
+    };
+  }, [isDarkMode]);
+
+  const selectedTagStyle = useMemo(() => {
+    if (!selectedClusterData) return undefined;
+    const [r, g, b] = getClusterColorRGBA(selectedClusterData.cluster, isDarkMode);
+    return {
+      '--selected-tag-color': `rgb(${r}, ${g}, ${b})`,
+      '--selected-tag-bg': `rgba(${r}, ${g}, ${b}, ${isDarkMode ? 0.22 : 0.14})`,
+      '--selected-tag-border': `rgba(${r}, ${g}, ${b}, ${isDarkMode ? 0.45 : 0.28})`,
+      '--selected-tag-clear-bg': `rgba(${r}, ${g}, ${b}, ${isDarkMode ? 0.32 : 0.22})`,
+      '--selected-tag-clear-hover-bg': `rgba(${r}, ${g}, ${b}, ${isDarkMode ? 0.44 : 0.34})`,
+    };
+  }, [selectedClusterData, isDarkMode]);
 
   // Auto-expand all nodes on mount for better visibility
   useEffect(() => {
@@ -70,6 +108,29 @@ function TopicTree({
     );
   }, [clusterLabels, searchQuery]);
 
+  // Keep local selected-tag UI in sync with externally-driven cluster filters
+  // (e.g. map label click, hover card actions).
+  useEffect(() => {
+    const activeCluster = clusterFilter?.cluster;
+    if (
+      activeCluster &&
+      filterConfig?.type === filterConstants.CLUSTER &&
+      activeCluster.cluster !== undefined &&
+      activeCluster.cluster !== null
+    ) {
+      const canonical = clusterLabels?.find((c) => String(c.cluster) === String(activeCluster.cluster));
+      const next = canonical || activeCluster;
+      setInternalSelectedCluster(next.cluster);
+      setSelectedClusterData(next);
+      return;
+    }
+
+    if (!activeCluster && (!filterConfig || filterConfig.type !== filterConstants.CLUSTER)) {
+      setInternalSelectedCluster(null);
+      setSelectedClusterData(null);
+    }
+  }, [clusterFilter?.cluster, filterConfig, clusterLabels]);
+
   const handleSelectCluster = useCallback((cluster) => {
     setInternalSelectedCluster(cluster.cluster);
     setSelectedClusterData(cluster);
@@ -82,14 +143,23 @@ function TopicTree({
     // Update filter context to filter tweets in the feed
     if (clusterFilter && setFilterConfig && setFilterActive) {
       clusterFilter.setCluster(cluster);
+      setFilterQuery(cluster.label || String(cluster.cluster));
       setFilterConfig({
         type: filterConstants.CLUSTER,
         value: cluster.cluster,
         label: cluster.label,
       });
       setFilterActive(true);
+      setUrlParams((prev) => {
+        prev.set('cluster', cluster.cluster);
+        prev.delete('feature');
+        prev.delete('search');
+        prev.delete('column');
+        prev.delete('value');
+        return new URLSearchParams(prev);
+      });
     }
-  }, [onSelectCluster, clusterFilter, setFilterConfig, setFilterActive]);
+  }, [onSelectCluster, clusterFilter, setFilterConfig, setFilterActive, setFilterQuery, setUrlParams]);
 
   // Handle zoom to cluster - compute bounds from hull and call callback
   const handleZoomToCluster = useCallback((cluster) => {
@@ -137,7 +207,7 @@ function TopicTree({
       <div key={node.cluster} className={styles.treeNode}>
         <div
           className={`${styles.treeItem} ${isSelected ? styles.selected : ''} ${!isVisible ? styles.hidden : ''} ${isHoveredFromScatter ? styles.hoveredFromScatter : ''}`}
-          style={{ paddingLeft: `${depth * 16 + 8}px` }}
+          style={buildClusterStyle(node.cluster, { paddingLeft: `${depth * 16 + 8}px` })}
           onClick={() => handleSelectCluster(node)}
           onDoubleClick={() => handleZoomToCluster(node)}
           title="Double-click to zoom to cluster"
@@ -168,7 +238,7 @@ function TopicTree({
         )}
       </div>
     );
-  }, [expandedNodes, selectedCluster, internalSelectedCluster, visibleLayers, handleSelectCluster, handleZoomToCluster, toggleNode, hoveredCluster]);
+  }, [expandedNodes, selectedCluster, internalSelectedCluster, visibleLayers, handleSelectCluster, handleZoomToCluster, toggleNode, hoveredCluster, buildClusterStyle]);
 
   // For flat (non-hierarchical) labels, render as a simple list
   const renderFlatList = useMemo(() => {
@@ -188,7 +258,7 @@ function TopicTree({
           <div
             key={label.cluster}
             className={`${styles.treeItem} ${isSelected ? styles.selected : ''} ${isHoveredFromScatter ? styles.hoveredFromScatter : ''}`}
-            style={{ paddingLeft: '8px' }}
+            style={buildClusterStyle(label.cluster, { paddingLeft: '8px' })}
             onClick={() => handleSelectCluster(label)}
             onDoubleClick={() => handleZoomToCluster(label)}
             title="Click to filter • Double-click to zoom"
@@ -200,7 +270,7 @@ function TopicTree({
           </div>
         );
       });
-  }, [filteredClusterLabels, selectedCluster, internalSelectedCluster, handleSelectCluster, handleZoomToCluster, hoveredCluster]);
+  }, [filteredClusterLabels, selectedCluster, internalSelectedCluster, handleSelectCluster, handleZoomToCluster, hoveredCluster, buildClusterStyle]);
 
   if (!scope) {
     return (
@@ -225,14 +295,24 @@ function TopicTree({
     setInternalSelectedCluster(null);
     setSelectedClusterData(null);
     setSearchQuery('');
-    setIsExpanded(true); // Re-expand when clearing
+    // Preserve current expand/collapse state when clearing selection.
     if (clusterFilter) {
       clusterFilter.clear();
     }
+    setFilterConfig(null);
+    setFilterQuery('');
     if (setFilterActive) {
       setFilterActive(false);
     }
-  }, [clusterFilter, setFilterActive]);
+    setUrlParams((prev) => {
+      prev.delete('cluster');
+      prev.delete('feature');
+      prev.delete('search');
+      prev.delete('column');
+      prev.delete('value');
+      return new URLSearchParams(prev);
+    });
+  }, [clusterFilter, setFilterActive, setFilterConfig, setFilterQuery, setUrlParams]);
 
   return (
     <div className={styles.topicTree}>
@@ -241,7 +321,7 @@ function TopicTree({
         <div className={styles.searchInputWrapper}>
           {selectedClusterData ? (
             <>
-              <span className={styles.selectedTag}>
+              <span className={styles.selectedTag} style={selectedTagStyle}>
                 <span className={styles.tagLabel} title={selectedClusterData.label}>
                   {selectedClusterData.label}
                 </span>

@@ -39,7 +39,7 @@
 
 .clusterLabel {
   margin: 0;
-  font-family: 'Golos Text', system-ui, sans-serif;
+  font-family: 'Instrument Sans', system-ui, sans-serif;
   font-size: 15px;
   font-weight: 600;
   color: var(--text-color-text-main);
@@ -55,7 +55,7 @@
 }
 
 .clusterCount {
-  font-family: 'Golos Text', system-ui, sans-serif;
+  font-family: 'Instrument Sans', system-ui, sans-serif;
   font-size: 12px;
   font-weight: 400;
   color: var(--text-color-text-subtle);
@@ -96,6 +96,23 @@
   }
 }
 
+.replyDepthIndicator {
+  border-left: 2px solid color-mix(in srgb, var(--semantic-color-semantic-warning) 55%, transparent);
+  padding-left: var(--space-2);
+  margin-left: 1px;
+  border-radius: var(--radius-xs);
+}
+
+:global(:root[data-theme="dark"]) .tweetScroll {
+  &::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.12);
+
+    &:hover {
+      background: rgba(255, 255, 255, 0.2);
+    }
+  }
+}
+
 .loadingRow {
   display: flex;
   justify-content: center;
@@ -116,6 +133,11 @@
   }
 }
 
+:global(:root[data-theme="dark"]) .spinner {
+  border-color: rgba(255, 255, 255, 0.1);
+  border-top-color: var(--interactions---primary-color-interaction-primary);
+}
+
 @keyframes spin {
   to {
     transform: rotate(360deg);
@@ -128,7 +150,7 @@
   border: none;
   border-top: 1px solid var(--glass-border-subtle);
   background: rgba(255, 255, 255, 0.4);
-  font-family: 'Golos Text', system-ui, sans-serif;
+  font-family: 'Instrument Sans', system-ui, sans-serif;
   font-size: 13px;
   font-weight: 500;
   color: var(--interactions---primary-color-interaction-primary);
@@ -136,15 +158,23 @@
   transition: all var(--transition-fast);
 
   &:hover {
-    background: rgba(184, 115, 51, 0.08);
+    background: rgba(36, 131, 123, 0.08);
   }
 
   @media (prefers-color-scheme: dark) {
     background: rgba(255, 255, 255, 0.03);
 
     &:hover {
-      background: rgba(184, 115, 51, 0.12);
+      background: rgba(36, 131, 123, 0.12);
     }
+  }
+}
+
+:global(:root[data-theme="dark"]) .loadMoreBtn {
+  background: rgba(255, 255, 255, 0.03);
+
+  &:hover {
+    background: rgba(36, 131, 123, 0.12);
   }
 }
 
@@ -153,7 +183,7 @@
   align-items: center;
   justify-content: center;
   height: 120px;
-  font-family: 'Golos Text', system-ui, sans-serif;
+  font-family: 'Instrument Sans', system-ui, sans-serif;
   font-size: 13px;
   font-weight: 400;
   color: var(--text-color-text-subtle);

@@ -1,9 +1,10 @@
-import { useCallback } from 'react';
+import { useCallback, memo } from 'react';
 import TweetCard from '../TweetFeed/TweetCard';
 import SubClusterPills from './SubClusterPills';
 import styles from './FeedColumn.module.scss';
 
-export default function FeedColumn({
+function FeedColumn({
+  columnIndex,
   cluster,
   tweets,
   focusState,
@@ -19,10 +20,20 @@ export default function FeedColumn({
   onHover,
   onClick,
   hoveredIndex,
+  nodeStats,
+  onViewThread,
+  onViewQuotes,
 }) {
   const handleLoadMore = useCallback(() => {
-    if (onLoadMore) onLoadMore();
-  }, [onLoadMore]);
+    if (onLoadMore) onLoadMore(columnIndex);
+  }, [onLoadMore, columnIndex]);
+
+  const handleSelectSubCluster = useCallback(
+    (subClusterId) => {
+      if (onSubClusterSelect) onSubClusterSelect(columnIndex, subClusterId);
+    },
+    [onSubClusterSelect, columnIndex]
+  );
 
   return (
     <div
@@ -39,21 +50,31 @@ export default function FeedColumn({
       <SubClusterPills
         subClusters={subClusters}
         activeSubCluster={activeSubCluster}
-        onSelect={onSubClusterSelect}
+        onSelect={handleSelectSubCluster}
       />
 
       <div className={styles.tweetScroll}>
-        {tweets.map((row) => (
-          <TweetCard
-            key={row.ls_index ?? row.index}
-            row={row}
-            textColumn={dataset?.text_column}
-            clusterInfo={clusterMap?.[row.ls_index]}
-            isHighlighted={hoveredIndex === row.ls_index}
-            onHover={onHover}
-            onClick={onClick}
-          />
-        ))}
+        {tweets.map((row) => {
+          const rowStats = nodeStats?.get(row.ls_index);
+          return (
+            <div
+              key={row.ls_index ?? row.index}
+              className={rowStats?.threadDepth > 0 ? styles.replyDepthIndicator : undefined}
+            >
+              <TweetCard
+                row={row}
+                textColumn={dataset?.text_column}
+                clusterInfo={clusterMap?.[row.ls_index]}
+                isHighlighted={hoveredIndex === row.ls_index}
+                onHover={onHover}
+                onClick={onClick}
+                nodeStats={rowStats}
+                onViewThread={onViewThread ? () => onViewThread(row.ls_index) : undefined}
+                onViewQuotes={onViewQuotes ? () => onViewQuotes(row.ls_index) : undefined}
+              />
+            </div>
+          );
+        })}
 
         {loading && (
           <div className={styles.loadingRow}>
@@ -74,3 +95,5 @@ export default function FeedColumn({
     </div>
   );
 }
+
+export default memo(FeedColumn);

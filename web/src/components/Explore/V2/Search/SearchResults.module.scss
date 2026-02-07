@@ -53,6 +53,26 @@
   }
 }
 
+:global(:root[data-theme="dark"]) {
+  .resultsList {
+    background-color: #333;
+  }
+
+  .resultRow {
+    &:hover {
+      background-color: #555;
+    }
+  }
+
+  .resultContent {
+    color: #fff;
+  }
+
+  .groupHeading {
+    color: #999;
+  }
+}
+
 .searchButtonContainer {
     padding-top: 6px;
 }

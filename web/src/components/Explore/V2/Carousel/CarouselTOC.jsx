@@ -1,7 +1,7 @@
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect, memo } from 'react';
 import styles from './CarouselTOC.module.scss';
 
-export default function CarouselTOC({
+function CarouselTOC({
   topLevelClusters,
   focusedIndex,
   onClickCluster,
@@ -22,6 +22,15 @@ export default function CarouselTOC({
       hoverTimeoutRef.current = null;
     }
     setHoveredIndex(null);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (hoverTimeoutRef.current) {
+        clearTimeout(hoverTimeoutRef.current);
+        hoverTimeoutRef.current = null;
+      }
+    };
   }, []);
 
   if (!topLevelClusters?.length) return null;
@@ -75,3 +84,5 @@ export default function CarouselTOC({
     </div>
   );
 }
+
+export default memo(CarouselTOC);

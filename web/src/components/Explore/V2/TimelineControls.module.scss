@@ -1,0 +1,148 @@
+.timelineControls {
+  position: absolute;
+  bottom: var(--space-4);
+  left: 56px;
+  right: var(--space-4);
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  background: var(--glass-bg);
+  backdrop-filter: blur(20px) saturate(150%);
+  -webkit-backdrop-filter: blur(20px) saturate(150%);
+  border: 1px solid var(--glass-border-subtle);
+  border-radius: var(--radius-md);
+  box-shadow: var(--glass-shadow), var(--glass-glow);
+  user-select: none;
+  transition: right var(--transition-normal);
+}
+
+/* ---- Play / Speed buttons ---- */
+.playButton,
+.speedButton {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: var(--interactions---secondary-color-interaction-secondary-hover);
+  color: var(--text-color-text-subtle);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+
+  &:hover {
+    background: var(--semantic-color-semantic-info-disabled);
+    color: var(--semantic-color-semantic-info-active);
+  }
+
+  &:active {
+    transform: scale(0.94);
+  }
+}
+
+.playButton {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+}
+
+.speedButton {
+  height: 26px;
+  padding: 0 var(--space-2);
+  font-size: 11px;
+  font-weight: 600;
+  font-family: inherit;
+  letter-spacing: 0.02em;
+}
+
+/* ---- Track area ---- */
+.trackContainer {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  padding: 0 2px;
+}
+
+.dateLabels {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 0 6px;
+}
+
+.dateLabel {
+  font-size: 11px;
+  font-weight: 600;
+  font-family: inherit;
+  color: var(--text-color-text-main);
+  white-space: nowrap;
+  letter-spacing: -0.01em;
+}
+
+.dateSummary {
+  font-size: 10px;
+  font-weight: 500;
+  font-family: inherit;
+  color: var(--text-color-text-subtle);
+  white-space: nowrap;
+}
+
+/* ---- Slider track ---- */
+.track {
+  position: relative;
+  height: 8px;
+  background: var(--borders-color-border-3);
+  border-radius: var(--radius-full);
+  cursor: pointer;
+}
+
+.trackFill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-radius: var(--radius-full);
+  background: var(--semantic-color-semantic-info);
+  opacity: 0.55;
+  pointer-events: none;
+  transition: opacity var(--transition-fast);
+}
+
+.timelineControls:hover .trackFill {
+  opacity: 0.72;
+}
+
+/* ---- Handles (pill-shaped) ---- */
+.handle {
+  position: absolute;
+  top: 50%;
+  width: 6px;
+  height: 18px;
+  border-radius: 3px;
+  background: var(--semantic-color-semantic-info);
+  box-shadow: 0 1px 3px var(--overlays-color-background-overlay),
+              0 0 0 2px var(--neutrals-color-neutral-0);
+  transform: translate(-50%, -50%);
+  cursor: grab;
+  touch-action: none;
+  z-index: 2;
+  transition: box-shadow var(--transition-fast),
+              height var(--transition-fast);
+
+  &:hover {
+    height: 22px;
+    box-shadow: 0 2px 6px var(--overlays-color-background-overlay),
+                0 0 0 2px var(--neutrals-color-neutral-0);
+  }
+
+  &:active {
+    cursor: grabbing;
+    height: 22px;
+    background: var(--semantic-color-semantic-info-active);
+    box-shadow: 0 2px 8px var(--semantic-color-semantic-info-disabled),
+                0 0 0 2px var(--neutrals-color-neutral-0);
+  }
+}

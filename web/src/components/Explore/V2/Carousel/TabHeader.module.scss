@@ -21,6 +21,15 @@
       transparent 100%
     );
   }
+
+  :global(:root[data-theme="dark"]) & {
+    background: linear-gradient(
+      to bottom,
+      var(--neutrals-color-neutral-0) 0%,
+      var(--neutrals-color-neutral-0) 80%,
+      transparent 100%
+    );
+  }
 }
 
 .tabRow {
@@ -54,7 +63,7 @@
   -webkit-box-orient: vertical;
   overflow: hidden;
   text-overflow: ellipsis;
-  font-family: 'Golos Text', system-ui, sans-serif;
+  font-family: 'Instrument Sans', system-ui, sans-serif;
   font-size: 14px;
   font-weight: 600;
   color: var(--text-color-text-main);
@@ -69,7 +78,7 @@
 
 .descText {
   margin: 0;
-  font-family: 'Golos Text', system-ui, sans-serif;
+  font-family: 'Instrument Sans', system-ui, sans-serif;
   font-size: 12px;
   font-weight: 400;
   color: var(--text-color-text-subtle);
@@ -89,7 +98,7 @@
   border: none;
   padding: 0;
   margin-top: var(--space-1);
-  font-family: 'Golos Text', system-ui, sans-serif;
+  font-family: 'Instrument Sans', system-ui, sans-serif;
   font-size: 12px;
   font-weight: 500;
   color: var(--interactions---primary-color-interaction-primary);

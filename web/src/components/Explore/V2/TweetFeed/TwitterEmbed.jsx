@@ -149,14 +149,6 @@ function TwitterEmbed({
   const resolvedId = tweetId || extractTweetId(tweetUrl);
 
   useEffect(() => {
-    console.log('[TwitterEmbed] Mounting with:', {
-      tweetId,
-      tweetUrl,
-      resolvedId,
-      tweetIdType: typeof tweetId,
-      resolvedIdType: typeof resolvedId
-    });
-
     if (!resolvedId || !containerRef.current) {
       setError('Invalid tweet ID or URL');
       setLoading(false);
@@ -170,8 +162,6 @@ function TwitterEmbed({
     container.innerHTML = '';
     setLoading(true);
     setError(null);
-
-    console.log('[TwitterEmbed] Calling createTweet with ID:', resolvedId);
 
     const EMBED_TIMEOUT_MS = 15000;
 

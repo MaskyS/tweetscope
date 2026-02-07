@@ -35,7 +35,7 @@
   border: 1px solid var(--glass-border-subtle);
   border-radius: var(--radius-sm);
   box-shadow: var(--glass-shadow);
-  font-family: 'Golos Text', system-ui, sans-serif;
+  font-family: 'Instrument Sans', system-ui, sans-serif;
   font-size: 12px;
   font-weight: 400;
   color: var(--text-color-text-subtle);
@@ -63,10 +63,14 @@
     @media (prefers-color-scheme: dark) {
       background: rgba(255, 255, 255, 0.06);
     }
+
+    :global(:root[data-theme="dark"]) & {
+      background: rgba(255, 255, 255, 0.06);
+    }
   }
 
   &.active {
-    background: rgba(184, 115, 51, 0.1);
+    background: rgba(36, 131, 123, 0.1);
 
     .tocLabel {
       font-weight: 600;
@@ -74,14 +78,18 @@
     }
 
     @media (prefers-color-scheme: dark) {
-      background: rgba(184, 115, 51, 0.15);
+      background: rgba(36, 131, 123, 0.15);
+    }
+
+    :global(:root[data-theme="dark"]) & {
+      background: rgba(36, 131, 123, 0.15);
     }
   }
 }
 
 .tocLabel {
   flex: 1;
-  font-family: 'Golos Text', system-ui, sans-serif;
+  font-family: 'Instrument Sans', system-ui, sans-serif;
   font-size: 13px;
   font-weight: 500;
   color: var(--text-color-text-main);
@@ -92,7 +100,7 @@
 }
 
 .tocCount {
-  font-family: 'Golos Text', system-ui, sans-serif;
+  font-family: 'Instrument Sans', system-ui, sans-serif;
   font-size: 11px;
   font-weight: 400;
   color: var(--text-color-text-subtle);
@@ -126,12 +134,16 @@
     @media (prefers-color-scheme: dark) {
       background: rgba(255, 255, 255, 0.04);
     }
+
+    :global(:root[data-theme="dark"]) & {
+      background: rgba(255, 255, 255, 0.04);
+    }
   }
 }
 
 .subLabel {
   flex: 1;
-  font-family: 'Golos Text', system-ui, sans-serif;
+  font-family: 'Instrument Sans', system-ui, sans-serif;
   font-size: 12px;
   font-weight: 400;
   color: var(--text-color-text-subtle);
@@ -142,7 +154,7 @@
 }
 
 .subCount {
-  font-family: 'Golos Text', system-ui, sans-serif;
+  font-family: 'Instrument Sans', system-ui, sans-serif;
   font-size: 10px;
   font-weight: 400;
   color: var(--text-color-text-subtle);

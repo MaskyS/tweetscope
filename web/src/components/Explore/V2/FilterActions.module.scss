@@ -4,6 +4,12 @@
   }
 }
 
+:global(:root[data-theme="dark"]) {
+  .filter-actions-button {
+    border: .5px solid var(--neutrals-color-neutral-3) !important;
+  }
+}
+
 .container {
   display: flex;
   flex-direction: column;
@@ -42,6 +48,10 @@
   }
 
   @media (prefers-color-scheme: dark) {
+    border: .5px solid var(--neutrals-color-neutral-3);
+  }
+
+  :global(:root[data-theme="dark"]) & {
     border: .5px solid var(--neutrals-color-neutral-3);
   }
 }
