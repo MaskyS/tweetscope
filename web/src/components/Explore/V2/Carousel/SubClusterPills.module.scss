@@ -1,0 +1,86 @@
+.pillBar {
+  display: flex;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  overflow-x: auto;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--glass-border-subtle);
+
+  /* Hide scrollbar */
+  &::-webkit-scrollbar {
+    display: none;
+  }
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-3);
+  background: rgba(0, 0, 0, 0.04);
+  border: 1px solid var(--glass-border-subtle);
+  border-radius: var(--radius-full);
+  font-family: 'Golos Text', system-ui, sans-serif;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-color-text-subtle);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all var(--transition-fast);
+  flex-shrink: 0;
+
+  &:hover {
+    background: rgba(0, 0, 0, 0.08);
+    color: var(--text-color-text-main);
+  }
+
+  &.active {
+    background: rgba(184, 115, 51, 0.12);
+    border-color: rgba(184, 115, 51, 0.25);
+    color: var(--interactions---primary-color-interaction-primary);
+    font-weight: 600;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    background: rgba(255, 255, 255, 0.06);
+
+    &:hover {
+      background: rgba(255, 255, 255, 0.1);
+    }
+
+    &.active {
+      background: rgba(184, 115, 51, 0.18);
+      border-color: rgba(184, 115, 51, 0.3);
+    }
+  }
+}
+
+.pillLabel {
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pillBadge {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  background: rgba(0, 0, 0, 0.06);
+  border-radius: var(--radius-full);
+  color: var(--text-color-text-subtle);
+
+  .active & {
+    background: rgba(184, 115, 51, 0.15);
+    color: var(--interactions---primary-color-interaction-primary);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    background: rgba(255, 255, 255, 0.08);
+
+    .active & {
+      background: rgba(184, 115, 51, 0.22);
+    }
+  }
+}

@@ -288,7 +288,7 @@ const DeckGLScatter = forwardRef(function DeckGLScatter({
   }, []);
   const textWidthCacheRef = useRef(new Map());
 
-  // Expose zoomToBounds method via ref
+  // Expose zoomToBounds and getViewState methods via ref
   useImperativeHandle(ref, () => ({
     zoomToBounds: (bounds, transitionDuration = 500) => {
       const [minX, minY, maxX, maxY] = bounds;
@@ -307,8 +307,9 @@ const DeckGLScatter = forwardRef(function DeckGLScatter({
         transitionDuration,
         transitionInterpolator: new LinearInterpolator(['target', 'zoom']),
       });
-    }
-  }), [width, height, minZoom, maxZoom]);
+    },
+    getViewState: () => controlledViewState,
+  }), [width, height, minZoom, maxZoom, controlledViewState]);
 
   const pointCount = points.length;
 

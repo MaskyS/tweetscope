@@ -95,6 +95,7 @@ setup(
             'ls-sae=latentscope.scripts.sae:main',
             'ls-download-dataset=latentscope.scripts.download_dataset:main',
             'ls-upload-dataset=latentscope.scripts.upload_dataset:main',
+            'ls-twitter-import=latentscope.scripts.twitter_import:main',
         ],
     },
     include_package_data=True,

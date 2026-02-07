@@ -1,39 +1,23 @@
 import { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
+import { ChevronsRight, ChevronsLeft, Columns3, PanelRightClose } from 'lucide-react';
 
 import './Explore.css';
-import { isMobileDevice } from '../../components/Explore/V2/util';
 import { apiService } from '../../lib/apiService';
 
-// FilterActions removed - search is now integrated into TopicTree
 import SubNav from '../../components/SubNav';
-import LeftPane from '../../components/Explore/LeftPane';
 import VisualizationPane from '../../components/Explore/V2/VisualizationPane';
 import TweetFeed from '../../components/Explore/V2/TweetFeed';
 import TopicTree from '../../components/Explore/V2/TopicTree';
+import FeedCarousel from '../../components/Explore/V2/Carousel/FeedCarousel';
 
 import { ScopeProvider, useScope } from '../../contexts/ScopeContext';
 import { FilterProvider, useFilter } from '../../contexts/FilterContext';
 import useDebounce from '../../hooks/useDebounce';
+import useSidebarState, { SIDEBAR_MODES } from '../../hooks/useSidebarState';
+import useCarouselData from '../../hooks/useCarouselData';
 
 import { filterConstants } from '../../components/Explore/V2/Search/utils';
-
-const styles = {
-  dragHandle: {
-    position: 'absolute',
-    left: -15,
-    top: 0,
-    bottom: 0,
-    width: 30,
-    cursor: 'ew-resize',
-    backgroundColor: 'transparent',
-    transition: 'background-color 0.2s',
-    '&:hover': {
-      backgroundColor: '#e0e0e0',
-    },
-    zIndex: 10,
-  },
-};
 
 // Create a new component that wraps the main content
 function ExploreContent() {
@@ -59,7 +43,6 @@ function ExploreContent() {
 
   // Get filter-related state from FilterContext
   const {
-    // filterLoading,
     loading: filterLoading,
     shownIndices,
     setFilterQuery,
@@ -69,6 +52,22 @@ function ExploreContent() {
     setFilterActive,
     setUrlParams,
   } = useFilter();
+
+  // ====================================================================================================
+  // Sidebar state (collapsed / normal / expanded)
+  // ====================================================================================================
+  const {
+    sidebarMode,
+    setSidebarMode,
+    toggleExpand,
+    toggleCollapse,
+    focusedClusterIndex,
+    setFocusedClusterIndex,
+    savedGraphViewState,
+  } = useSidebarState();
+
+  // Carousel data hook
+  const carouselData = useCarouselData(focusedClusterIndex);
 
   // Keep visualization-specific state
   const [scatter, setScatter] = useState({});
@@ -113,7 +112,7 @@ function ExploreContent() {
       });
     } else {
       setHovered(null);
-      latestHoverIndexRef.current = null; // Reset the ref when hover is cleared
+      latestHoverIndexRef.current = null;
     }
   }, [hoveredIndex, deletedIndices, clusterMap, debouncedHydrateHoverText]);
 
@@ -144,22 +143,6 @@ function ExploreContent() {
     },
     [deletedIndices]
   );
-
-  // const handleSelected = useCallback(
-  //   (indices) => {
-  //     const nonDeletedIndices = indices.filter((index) => !deletedIndices.includes(index));
-  //     if (activeFilterTab === filterConstants.CLUSTER) {
-  //       let selected = scopeRows.filter((row) => nonDeletedIndices.includes(row.ls_index))?.[0];
-  //       if (selected) {
-  //         const selectedCluster = clusterLabels.find((d) => d.cluster === selected.cluster);
-  //         //   setCluster(selectedCluster);
-  //       }
-  //     } else {
-  //       setSelectedIndices(nonDeletedIndices);
-  //     }
-  //   },
-  //   [activeFilterTab, deletedIndices, scopeRows, clusterLabels, setSelectedIndices]
-  // );
 
   const containerRef = useRef(null);
   const filtersContainerRef = useRef(null);
@@ -250,11 +233,12 @@ function ExploreContent() {
   const [width, height] = size;
 
   // ====================================================================================================
-  // Draggable State
+  // Draggable State (only active in normal mode)
   // ====================================================================================================
-  const [gridTemplate, setGridTemplate] = useState('50% 50%');
+  const [normalGridTemplate, setNormalGridTemplate] = useState('50% 50%');
 
   const startDragging = (e) => {
+    if (sidebarMode !== SIDEBAR_MODES.NORMAL) return;
     e.preventDefault();
     document.addEventListener('mousemove', onDrag);
     document.addEventListener('mouseup', stopDragging);
@@ -264,9 +248,8 @@ function ExploreContent() {
     if (containerRef.current) {
       const containerRect = containerRef.current.getBoundingClientRect();
       const percentage = ((e.clientX - containerRect.left) / containerRect.width) * 100;
-      // Graph is on left, sidebar on right. The percentage is the graph width.
       const newTemplate = `${Math.min(Math.max(percentage, 20), 80)}% 1fr`;
-      setGridTemplate(newTemplate);
+      setNormalGridTemplate(newTemplate);
       updateSize();
     }
   };
@@ -276,7 +259,74 @@ function ExploreContent() {
     document.removeEventListener('mouseup', stopDragging);
   };
 
-  // Add this CSS-in-JS style object near the top of the component
+  // ====================================================================================================
+  // Grid template based on sidebar mode
+  // ====================================================================================================
+  const gridTemplate = useMemo(() => {
+    switch (sidebarMode) {
+      case SIDEBAR_MODES.COLLAPSED:
+        return '1fr 0px';
+      case SIDEBAR_MODES.EXPANDED:
+        return '0px 1fr';
+      default:
+        return normalGridTemplate;
+    }
+  }, [sidebarMode, normalGridTemplate]);
+
+  // Update viz size after mode transition
+  useEffect(() => {
+    const timer = setTimeout(updateSize, 350); // After 300ms transition + buffer
+    return () => clearTimeout(timer);
+  }, [sidebarMode]);
+
+  // ====================================================================================================
+  // Sidebar mode transitions
+  // ====================================================================================================
+  const handleToggleExpand = useCallback(() => {
+    const graphViewState = vizRef.current?.getViewState?.();
+    toggleExpand(graphViewState);
+  }, [toggleExpand]);
+
+  const handleToggleCollapse = useCallback(() => {
+    toggleCollapse();
+  }, [toggleCollapse]);
+
+  // Zoom to focused cluster when returning from expanded mode
+  const prevModeRef = useRef(sidebarMode);
+  useEffect(() => {
+    const prevMode = prevModeRef.current;
+    prevModeRef.current = sidebarMode;
+
+    if (prevMode === SIDEBAR_MODES.EXPANDED && sidebarMode === SIDEBAR_MODES.NORMAL) {
+      // Returning from expanded — zoom to focused cluster
+      const cluster = carouselData.topLevelClusters[focusedClusterIndex];
+      if (cluster?.hull && cluster.hull.length >= 3 && scopeRows?.length) {
+        const hullPoints = cluster.hull
+          .map((idx) => scopeRows[idx])
+          .filter((p) => p && !p.deleted);
+
+        if (hullPoints.length >= 3) {
+          const xs = hullPoints.map((p) => p.x);
+          const ys = hullPoints.map((p) => p.y);
+          const padX = (Math.max(...xs) - Math.min(...xs)) * 0.15;
+          const padY = (Math.max(...ys) - Math.min(...ys)) * 0.15;
+
+          // Delay slightly to let the grid transition complete
+          setTimeout(() => {
+            vizRef.current?.zoomToBounds(
+              [
+                Math.min(...xs) - padX,
+                Math.min(...ys) - padY,
+                Math.max(...xs) + padX,
+                Math.max(...ys) + padY,
+              ],
+              500
+            );
+          }, 400);
+        }
+      }
+    }
+  }, [sidebarMode, focusedClusterIndex, carouselData.topLevelClusters, scopeRows]);
 
   const handleFeatureClick = useCallback(
     (featIdx, activation, label) => {
@@ -300,6 +350,10 @@ function ExploreContent() {
       </>
     );
 
+  const isCollapsed = sidebarMode === SIDEBAR_MODES.COLLAPSED;
+  const isExpanded = sidebarMode === SIDEBAR_MODES.EXPANDED;
+  const isNormal = sidebarMode === SIDEBAR_MODES.NORMAL;
+
   return (
     <>
       <SubNav
@@ -310,14 +364,12 @@ function ExploreContent() {
         onScopeChange={handleScopeChange}
       />
       <div className="page-container">
-        {!isMobileDevice() && (
-          <LeftPane dataset={dataset} scope={scope} deletedIndices={deletedIndices} tags={tags} />
-        )}
         <div
           ref={containerRef}
-          className="full-screen-explore-container"
+          className={`full-screen-explore-container ${isExpanded ? 'sidebar-expanded' : ''} ${isCollapsed ? 'sidebar-collapsed' : ''}`}
           style={{ gridTemplateColumns: gridTemplate }}
         >
+          {/* Graph pane */}
           <div
             ref={visualizationContainerRef}
             className="visualization-pane-container"
@@ -342,41 +394,138 @@ function ExploreContent() {
                 dataTableRows={dataTableRows}
               />
             ) : null}
+
+            {/* FAB button to reopen sidebar when collapsed */}
+            {isCollapsed && (
+              <button
+                className="fab-expand-button"
+                onClick={handleToggleCollapse}
+                title="Show sidebar"
+              >
+                <ChevronsLeft size={20} />
+              </button>
+            )}
           </div>
+
+          {/* Right pane: sidebar or carousel */}
           <div
             className="filter-table-container"
-            style={{ position: 'relative', overflowX: 'hidden', display: 'flex', flexDirection: 'column' }}
+            style={{
+              position: 'relative',
+              overflowX: 'hidden',
+              display: 'flex',
+              flexDirection: 'column',
+              overflow: isCollapsed ? 'hidden' : undefined,
+            }}
           >
-            <div style={styles.dragHandle} onMouseDown={startDragging} />
-            {/* Shared scroll container for TopicTree + TweetFeed */}
-            <div
-              ref={filtersContainerRef}
-              className="feed-scroll-container"
-              style={{
-                flex: 1,
-                overflowY: 'auto',
-                overflowX: 'hidden',
-                position: 'relative',
-              }}
-            >
-              {/* TopicTree - search bar is sticky, topic list scrolls away */}
-              {clusterLabels && clusterLabels.length > 0 && (
-                <TopicTree
-                  onZoomToCluster={handleZoomToCluster}
-                  hoveredCluster={hoveredCluster}
+            {/* Toggle button on the divider edge */}
+            {!isCollapsed && (
+              <div className="sidebar-toggle-area">
+                {isNormal && (
+                  <>
+                    <div
+                      className="drag-handle-zone"
+                      onMouseDown={startDragging}
+                    />
+                    <button
+                      className="sidebar-toggle-button"
+                      onClick={handleToggleCollapse}
+                      title="Collapse sidebar"
+                    >
+                      <ChevronsRight size={16} />
+                    </button>
+                    {clusterHierarchy && (
+                      <button
+                        className="sidebar-toggle-button sidebar-expand-button"
+                        onClick={handleToggleExpand}
+                        title="Expand to carousel"
+                      >
+                        <Columns3 size={16} />
+                      </button>
+                    )}
+                  </>
+                )}
+                {isExpanded && (
+                  <button
+                    className="sidebar-toggle-button"
+                    onClick={handleToggleExpand}
+                    title="Back to normal view"
+                  >
+                    <PanelRightClose size={16} />
+                  </button>
+                )}
+              </div>
+            )}
+
+            {/* Normal mode: TopicTree + TweetFeed */}
+            {isNormal && (
+              <div
+                ref={filtersContainerRef}
+                className="feed-scroll-container"
+                style={{
+                  flex: 1,
+                  overflowY: 'auto',
+                  overflowX: 'hidden',
+                  position: 'relative',
+                }}
+              >
+                {/* Prominent carousel toggle button */}
+                {clusterHierarchy && (
+                  <button
+                    className="carousel-banner-button"
+                    onClick={handleToggleExpand}
+                  >
+                    <Columns3 size={18} />
+                    <span>Browse All Topics</span>
+                    <ChevronsRight size={16} className="carousel-banner-arrow" />
+                  </button>
+                )}
+
+                {clusterLabels && clusterLabels.length > 0 && (
+                  <TopicTree
+                    onZoomToCluster={handleZoomToCluster}
+                    hoveredCluster={hoveredCluster}
+                  />
+                )}
+                <TweetFeed
+                  dataset={dataset}
+                  distances={searchFilter.distances}
+                  clusterMap={clusterMap}
+                  sae_id={sae?.id}
+                  onHover={handleHover}
+                  onClick={handleClicked}
+                  hoveredIndex={hoveredIndex}
                 />
-              )}
-              {/* TweetFeed - scrolls with topics */}
-              <TweetFeed
+              </div>
+            )}
+
+            {/* Expanded mode: FeedCarousel */}
+            {isExpanded && (
+              <>
+              <button
+                className="carousel-back-button"
+                onClick={handleToggleExpand}
+              >
+                <ChevronsLeft size={16} />
+                <span>Back to Map</span>
+              </button>
+              <FeedCarousel
+                topLevelClusters={carouselData.topLevelClusters}
+                columnData={carouselData.columnData}
+                getColumnRows={carouselData.getColumnRows}
+                loadMore={carouselData.loadMore}
+                activeSubClusters={carouselData.activeSubClusters}
+                setSubClusterFilter={carouselData.setSubClusterFilter}
                 dataset={dataset}
-                distances={searchFilter.distances}
                 clusterMap={clusterMap}
-                sae_id={sae?.id}
+                focusedClusterIndex={focusedClusterIndex}
+                onFocusedIndexChange={setFocusedClusterIndex}
                 onHover={handleHover}
                 onClick={handleClicked}
                 hoveredIndex={hoveredIndex}
               />
-            </div>
+              </>
+            )}
           </div>
         </div>
       </div>

@@ -8,8 +8,8 @@
 }
 
 .page {
-  padding-top: 40px;
-  height: calc(100vh - 93px); /* 40 + 53 (subnav height) */
+  padding-top: 0;
+  height: 100vh;
 }
 
 .docs-banner {

@@ -13,6 +13,7 @@ from importlib.resources import files
 from dotenv import dotenv_values, set_key
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
+from werkzeug.exceptions import RequestEntityTooLarge
 
 # from latentscope.util import update_data_dir
 from latentscope.util import get_data_dir, get_supported_api_keys
@@ -31,14 +32,32 @@ DATA_DIR = get_data_dir()
 if not os.path.exists(DATA_DIR):
     os.makedirs(DATA_DIR)
 
+def _env_int(name, default):
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return default
+
+MAX_UPLOAD_MB = _env_int("LATENT_SCOPE_MAX_UPLOAD_MB", 1024)
+app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_MB * 1024 * 1024
+
 # We enable a read only mode of the server
 def check_read_only(s):
     if s is None:
         return False
     return s.lower() in ['true', '1', 't', 'y', 'yes']
-# export LATENT_SCOPE_READ_ONLY=1  
-READ_ONLY = check_read_only(os.getenv("LATENT_SCOPE_READ_ONLY"))
+# export LATENT_SCOPE_READ_ONLY=1
+APP_MODE = os.getenv("LATENT_SCOPE_APP_MODE", "studio").strip().lower()
+if APP_MODE not in {"studio", "hosted", "single_profile"}:
+    APP_MODE = "studio"
+PUBLIC_DATASET_ID = os.getenv("LATENT_SCOPE_PUBLIC_DATASET")
+PUBLIC_SCOPE_ID = os.getenv("LATENT_SCOPE_PUBLIC_SCOPE")
+READ_ONLY = check_read_only(os.getenv("LATENT_SCOPE_READ_ONLY")) or APP_MODE == "single_profile"
 print("READ ONLY?", READ_ONLY)
+print("APP MODE?", APP_MODE)
 
 # in memory cache of dataframes loaded for each dataset
 # used in returning rows for a given index (indexed, get_tags)
@@ -83,6 +102,11 @@ if not READ_ONLY:
 
 # Cache for resolved URLs to avoid repeated lookups
 URL_CACHE = {}
+
+
+@app.errorhandler(RequestEntityTooLarge)
+def handle_large_upload(_error):
+    return jsonify({"error": f"Upload too large. Limit is {MAX_UPLOAD_MB} MB."}), 413
 
 @app.route('/api/resolve-url', methods=['POST'])
 def resolve_url():
@@ -374,7 +398,7 @@ def query():
         "totalPages": math.ceil(len(rows) / per_page)
     })
 
-if not READ_ONLY:
+if APP_MODE == "studio" and not READ_ONLY:
     @app.route('/api/settings', methods=['POST'])
     def update_settings():
         data = request.get_json()
@@ -399,6 +423,33 @@ if not READ_ONLY:
 def get_version():
     print("GET VERSION", __version__)
     return __version__
+
+
+@app.route('/api/app-config', methods=['GET'])
+def get_app_config():
+    # Feature flags allow one frontend build to handle studio/hosted/single-profile variants.
+    features = {
+        "can_explore": True,
+        "can_compare": APP_MODE == "studio",
+        "can_ingest": APP_MODE in {"studio", "hosted"} and not READ_ONLY,
+        "can_setup": APP_MODE == "studio" and not READ_ONLY,
+        "can_jobs": APP_MODE == "studio" and not READ_ONLY,
+        "can_export": APP_MODE == "studio" and not READ_ONLY,
+        "can_settings": APP_MODE == "studio" and not READ_ONLY,
+        "twitter_import": APP_MODE in {"hosted", "studio"} and not READ_ONLY,
+        "generic_file_ingest": APP_MODE == "studio" and not READ_ONLY,
+    }
+    return jsonify(
+        {
+            "mode": APP_MODE,
+            "read_only": READ_ONLY,
+            "public_dataset_id": PUBLIC_DATASET_ID,
+            "public_scope_id": PUBLIC_SCOPE_ID,
+            "features": features,
+            "limits": {"max_upload_mb": MAX_UPLOAD_MB},
+            "version": __version__,
+        }
+    )
 
 
 @app.route('/', defaults={'path': ''})

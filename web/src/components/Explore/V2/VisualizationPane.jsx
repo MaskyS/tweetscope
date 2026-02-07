@@ -64,11 +64,12 @@ const VisualizationPane = forwardRef(function VisualizationPane({
   // Ref for scatter component to enable programmatic zoom
   const scatterRef = useRef(null);
 
-  // Expose zoomToBounds method to parent
+  // Expose zoomToBounds and getViewState methods to parent
   useImperativeHandle(ref, () => ({
     zoomToBounds: (bounds, duration) => {
       scatterRef.current?.zoomToBounds(bounds, duration);
-    }
+    },
+    getViewState: () => scatterRef.current?.getViewState?.(),
   }), []);
 
   const [xDomain, setXDomain] = useState([-1, 1]);

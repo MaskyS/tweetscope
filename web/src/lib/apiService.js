@@ -262,6 +262,9 @@ export const apiService = {
   fetchVersion: async () => {
     return fetch(`${apiUrl}/version`).then((response) => response.text());
   },
+  fetchAppConfig: async () => {
+    return fetch(`${apiUrl}/app-config`).then((response) => response.json());
+  },
   fetchSettings: async () => {
     return fetch(`${apiUrl}/settings`).then((response) => response.json());
   },

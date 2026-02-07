@@ -1,0 +1,101 @@
+.header {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  padding: var(--space-4) 0 var(--space-3) 0;
+  overflow: hidden;
+
+  /* Gradient fade to background */
+  background: linear-gradient(
+    to bottom,
+    var(--neutrals-color-neutral-0) 0%,
+    var(--neutrals-color-neutral-0) 80%,
+    transparent 100%
+  );
+
+  @media (prefers-color-scheme: dark) {
+    background: linear-gradient(
+      to bottom,
+      var(--neutrals-color-neutral-0) 0%,
+      var(--neutrals-color-neutral-0) 80%,
+      transparent 100%
+    );
+  }
+}
+
+.tabRow {
+  display: flex;
+  will-change: transform;
+  transition: transform 0.1s ease-out;
+}
+
+.tab {
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  padding: var(--space-2) 0;
+  text-align: left;
+  cursor: pointer;
+  max-width: 550px;
+  transition: opacity 0.3s ease-out;
+
+  &:hover .tabLabel {
+    color: var(--interactions---primary-color-interaction-primary);
+  }
+
+  &.focused .tabLabel {
+    color: var(--interactions---primary-color-interaction-primary);
+  }
+}
+
+.tabLabel {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: 'Golos Text', system-ui, sans-serif;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-color-text-main);
+  line-height: 1.3;
+  letter-spacing: -0.005em;
+  transition: color var(--transition-fast);
+}
+
+.tabDescription {
+  margin-top: var(--space-1);
+}
+
+.descText {
+  margin: 0;
+  font-family: 'Golos Text', system-ui, sans-serif;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--text-color-text-subtle);
+  line-height: 1.5;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+
+  &.expanded {
+    -webkit-line-clamp: unset;
+  }
+}
+
+.moreBtn {
+  background: none;
+  border: none;
+  padding: 0;
+  margin-top: var(--space-1);
+  font-family: 'Golos Text', system-ui, sans-serif;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--interactions---primary-color-interaction-primary);
+  cursor: pointer;
+
+  &:hover {
+    text-decoration: underline;
+  }
+}

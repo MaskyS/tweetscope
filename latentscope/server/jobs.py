@@ -2,21 +2,35 @@ import os
 import time
 import json
 import uuid
+import shlex
+import shutil
+import zipfile
 import subprocess
 import threading
 from datetime import datetime
 from flask import Blueprint, jsonify, request
+from latentscope.importers.twitter import sanitize_dataset_id
 
 # Create a Blueprint
 jobs_bp = Blueprint('jobs_bp', __name__)
 jobs_write_bp = Blueprint('jobs_write_bp', __name__)
 DATA_DIR = os.getenv('LATENT_SCOPE_DATA')
 
-TIMEOUT = 60 * 5 # 5 minute timeout TODO: make this a config option
+def _env_int(name, default):
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return default
+
+
+TIMEOUT = _env_int("LATENT_SCOPE_JOB_TIMEOUT_SEC", 60 * 30) # default 30 minutes
 
 PROCESSES = {}
 
-def run_job(dataset, job_id, command):
+def run_job(dataset, job_id, command, cleanup_paths=None):
     job_dir = os.path.join(DATA_DIR, dataset, "jobs")
     if not os.path.exists(job_dir):
       os.makedirs(job_dir)
@@ -73,6 +87,7 @@ def run_job(dataset, job_id, command):
     # stderr_thread = threading.Thread(target=handle_stderr)
     # stderr_thread.daemon = True
     # stderr_thread.start()
+    timed_out = False
 
     while True:
         output = process.stdout.readline()
@@ -88,6 +103,14 @@ def run_job(dataset, job_id, command):
                 run_id = output.strip().split("RUNNING: ")[1]
                 print("found the id", run_id)
                 job["run_id"] = run_id
+            if "FINAL_SCOPE:" in output:
+                job["scope_id"] = output.strip().split("FINAL_SCOPE:")[1].strip()
+            if "IMPORTED_ROWS:" in output:
+                imported_rows = output.strip().split("IMPORTED_ROWS:")[1].strip()
+                try:
+                    job["imported_rows"] = int(imported_rows)
+                except ValueError:
+                    job["imported_rows"] = imported_rows
             job["progress"].append(output.strip())
             job["times"].append(str(datetime.now()))
             job["last_update"] = str(datetime.now())
@@ -100,16 +123,45 @@ def run_job(dataset, job_id, command):
             job["progress"].append(output.strip())
             job["progress"].append(f"Timeout: No output for more than {TIMEOUT} seconds.")
             job["status"] = "error"
+            timed_out = True
+            try:
+                process.terminate()
+                process.wait(timeout=10)
+            except Exception:
+                process.kill()
             break  # Break the loop
 
     # stderr_thread.join(timeout=1)  # Wait for stderr thread to finish
+    if process.returncode is None:
+        process.wait()
 
-    if process.returncode != 0:
-        job["status"] = "error"
-    else:
-        job["status"] = "completed"
+    if not timed_out:
+        if process.returncode != 0:
+            job["status"] = "error"
+        else:
+            job["status"] = "completed"
     # job["status"] = "completed"
 
+    if cleanup_paths:
+        cleanup_errors = []
+        for path in cleanup_paths:
+            if not path:
+                continue
+            try:
+                if os.path.isdir(path):
+                    shutil.rmtree(path, ignore_errors=False)
+                elif os.path.exists(path):
+                    os.remove(path)
+            except Exception as err:
+                cleanup_errors.append(f"{path}: {err}")
+        if cleanup_errors:
+            job["progress"].append("Cleanup errors:")
+            for err in cleanup_errors:
+                job["progress"].append(err)
+        else:
+            job["progress"].append("Cleaned up temporary upload files.")
+
+    PROCESSES.pop(job_id, None)
     with open(progress_file, 'w') as f:
         json.dump(job, f)
 
@@ -160,7 +212,93 @@ def run_ingest():
     if text_column:
         command += f' --text_column="{text_column}"'
     threading.Thread(target=run_job, args=(dataset, job_id, command)).start()
-    return jsonify({"job_id": job_id})
+    return jsonify({"job_id": job_id, "dataset": dataset})
+
+
+@jobs_write_bp.route('/import_twitter', methods=['POST'])
+def run_import_twitter():
+    job_id = str(uuid.uuid4())
+    dataset = request.form.get('dataset', '')
+    source_type = request.form.get('source_type', 'zip')
+    cleanup_paths = []
+
+    try:
+        dataset = sanitize_dataset_id(dataset)
+    except ValueError as err:
+        return jsonify({"error": str(err)}), 400
+
+    dataset_dir = os.path.join(DATA_DIR, dataset)
+    os.makedirs(dataset_dir, exist_ok=True)
+    uploads_dir = os.path.join(dataset_dir, "uploads")
+    os.makedirs(uploads_dir, exist_ok=True)
+
+    command_parts = ['ls-twitter-import', dataset]
+
+    if source_type == 'zip':
+        file = request.files.get('file')
+        if file is None:
+            return jsonify({"error": "Missing zip file"}), 400
+        job_upload_dir = os.path.join(uploads_dir, job_id)
+        os.makedirs(job_upload_dir, exist_ok=True)
+        file_ext = os.path.splitext(file.filename or "")[1].lower() or ".zip"
+        file_path = os.path.join(job_upload_dir, f"twitter-archive-{uuid.uuid4().hex}{file_ext}")
+        file.save(file_path)
+        if not zipfile.is_zipfile(file_path):
+            shutil.rmtree(job_upload_dir, ignore_errors=True)
+            return jsonify({"error": "Uploaded file is not a valid zip archive"}), 400
+        command_parts.extend(['--source', 'zip', '--zip_path', file_path])
+        cleanup_paths.append(job_upload_dir)
+    elif source_type == 'community':
+        username = request.form.get('username', '').strip()
+        if not username:
+            return jsonify({"error": "Missing username"}), 400
+        command_parts.extend(['--source', 'community', '--username', username])
+    elif source_type == 'community_json':
+        file = request.files.get('file')
+        if file is None:
+            return jsonify({"error": "Missing community JSON file"}), 400
+        job_upload_dir = os.path.join(uploads_dir, job_id)
+        os.makedirs(job_upload_dir, exist_ok=True)
+        file_path = os.path.join(job_upload_dir, f"community-extract-{uuid.uuid4().hex}.json")
+        file.save(file_path)
+        cleanup_paths.append(job_upload_dir)
+        command_parts.extend(['--source', 'community_json', '--input_path', file_path])
+    else:
+        return jsonify({"error": f"Unsupported source_type: {source_type}"}), 400
+
+    optional_args = [
+        ("year", request.form.get("year")),
+        ("lang", request.form.get("lang")),
+        ("min_favorites", request.form.get("min_favorites")),
+        ("min_text_length", request.form.get("min_text_length")),
+        ("top_n", request.form.get("top_n")),
+        ("sort", request.form.get("sort")),
+        ("text_column", request.form.get("text_column")),
+        ("embedding_model", request.form.get("embedding_model")),
+        ("umap_neighbors", request.form.get("umap_neighbors")),
+        ("umap_min_dist", request.form.get("umap_min_dist")),
+        ("cluster_samples", request.form.get("cluster_samples")),
+        ("cluster_min_samples", request.form.get("cluster_min_samples")),
+        ("cluster_selection_epsilon", request.form.get("cluster_selection_epsilon")),
+    ]
+
+    for key, value in optional_args:
+        if value is not None and value != "":
+            command_parts.extend([f"--{key}", str(value)])
+
+    if request.form.get("exclude_replies", "").lower() in ("1", "true", "yes", "on"):
+        command_parts.append("--exclude_replies")
+    if request.form.get("exclude_retweets", "").lower() in ("1", "true", "yes", "on"):
+        command_parts.append("--exclude_retweets")
+
+    run_pipeline = request.form.get("run_pipeline", "true").lower() in ("1", "true", "yes", "on")
+    if run_pipeline:
+        command_parts.append("--run_pipeline")
+
+    command = " ".join(shlex.quote(part) for part in command_parts)
+
+    threading.Thread(target=run_job, args=(dataset, job_id, command, cleanup_paths)).start()
+    return jsonify({"job_id": job_id, "dataset": dataset})
 
 @jobs_write_bp.route('/reingest', methods=['GET'])
 def run_reingest():

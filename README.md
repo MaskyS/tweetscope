@@ -54,6 +54,29 @@ Then open your browser to http://localhost:5001 and start processing your first 
 
 See the [Your First Scope](https://enjalot.github.io/latent-scope/your-first-scope) guide for a detailed walk-through of the process.
 
+### Hosted and single-profile modes
+
+You can run one frontend build in different server modes using environment variables:
+
+```bash
+# default local authoring mode
+LATENT_SCOPE_APP_MODE=studio
+
+# hosted mode: explore + twitter import (no setup/settings)
+LATENT_SCOPE_APP_MODE=hosted
+
+# single profile mode: serve one public explore view only
+LATENT_SCOPE_APP_MODE=single_profile
+LATENT_SCOPE_PUBLIC_DATASET=your-dataset-id
+LATENT_SCOPE_PUBLIC_SCOPE=scopes-001
+
+# optional hosted limits
+LATENT_SCOPE_MAX_UPLOAD_MB=1024
+LATENT_SCOPE_JOB_TIMEOUT_SEC=1800
+```
+
+In hosted mode, the native X archive form supports a browser-side privacy mode that extracts/minimizes tweet JSON locally before upload.
+
 ### Python interface
 
 You can also ingest data from a Pandas dataframe using the Python interface:
@@ -134,6 +157,8 @@ If you want to use the CLI instead of the web UI you can use the following scrip
 The scripts should be run in order once you have an `input.csv` file in your folder. Alternatively the Setup page in the web UI will run these scripts via API calls to the server for you.  
 These scripts expect at the least a `LATENT_SCOPE_DATA` environment variable with a path to where you want to store your data. If you run `ls-serve` it will set the variable and put it in a `.env` file. You can add API keys to the .env file to enable usage of the various API services, see [.env.example](.env.example) for the structure.
 
+For hosted deployments, you can also set `LATENT_SCOPE_APP_MODE`, `LATENT_SCOPE_MAX_UPLOAD_MB`, and `LATENT_SCOPE_JOB_TIMEOUT_SEC`.
+
 ### 0. ingest
 
 This script turns the `input.csv` into `input.parquet` and sets up the directories and `meta.json` which run the app.
@@ -141,6 +166,18 @@ This script turns the `input.csv` into `input.parquet` and sets up the directori
 ```bash
 # ls-ingest <dataset_name>
 ls-ingest database-curated
+```
+
+### 0b. twitter import
+
+Import a native X export zip or a community archive, and optionally run the full pipeline:
+
+```bash
+# native X export zip
+ls-twitter-import visakanv --source zip --zip_path ~/Downloads/my-twitter-archive.zip --run_pipeline
+
+# community archive by username
+ls-twitter-import visakanv --source community --username visakanv --run_pipeline
 ```
 
 ### 1. embed

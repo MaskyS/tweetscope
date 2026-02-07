@@ -1,0 +1,68 @@
+.wrapper {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.carousel {
+  flex: 1;
+  display: flex;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scroll-snap-type: x mandatory;
+  gap: 32px;
+  padding-left: 32px;
+  padding-right: calc((100vw - 550px) / 2);
+  scroll-behavior: smooth;
+
+  /* Hide scrollbar */
+  &::-webkit-scrollbar {
+    display: none;
+  }
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.spacer {
+  flex-shrink: 0;
+}
+
+.fadeRight {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 120px;
+  height: 100%;
+  pointer-events: none;
+  z-index: 10;
+
+  background: linear-gradient(
+    to left,
+    var(--neutrals-color-neutral-0),
+    transparent
+  );
+
+  @media (prefers-color-scheme: dark) {
+    background: linear-gradient(
+      to left,
+      var(--neutrals-color-neutral-0),
+      transparent
+    );
+  }
+}
+
+.emptyCarousel {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  font-family: 'Golos Text', system-ui, sans-serif;
+  font-size: 14px;
+  font-weight: 400;
+  color: var(--text-color-text-subtle);
+}

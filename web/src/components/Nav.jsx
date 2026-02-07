@@ -1,26 +1,30 @@
-import { useState } from 'react';
 import { Link } from 'react-router-dom';
+import PropTypes from 'prop-types';
 import SettingsModal from './SettingsModal';
-import SubNav from './SubNav';
 import './Nav.css';
 
-const Nav = () => {
-  const [showSettings, setShowSettings] = useState(false);
+const Nav = ({ showSettings = true }) => {
   return (
     <>
       <nav>
         <ul>
           <li>
-            <Link to="/">Latent Scope</Link>
+            <Link to="/import">Tweet Knowledge Explorer</Link>
           </li>
-          <li className="settings">
-            <SettingsModal tooltip={false} color="secondary" variant="clear" />
-          </li>
+          {showSettings && (
+            <li className="settings">
+              <SettingsModal tooltip={false} color="secondary" variant="clear" />
+            </li>
+          )}
         </ul>
       </nav>
       {/* <SubNav /> */}
     </>
   );
+};
+
+Nav.propTypes = {
+  showSettings: PropTypes.bool,
 };
 
 export default Nav;

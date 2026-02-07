@@ -37,15 +37,16 @@
     display: grid;
     grid-template-columns: 50% 1fr;
     background: #fefefe;
-    flex-grow: 1;  
+    flex-grow: 1;
+    transition: grid-template-columns 300ms ease;
   }
   
-  .page-container {
-    display: flex;
-    gap: 4px;
-    height: 100%;
-    width: 100%;
-  }
+.page-container {
+  display: flex;
+  gap: 4px;
+  height: calc(100% - 53px);
+  width: 100%;
+}
   
   .filter-table-container {
     /* position: absolute;
@@ -547,9 +548,221 @@
     0% {
       transform: rotate(0deg);
     }
-  
+
     100% {
       transform: rotate(360deg);
     }
   }
-  
+
+  /* ====================================
+     Sidebar 3-state: collapsed / normal / expanded
+     ==================================== */
+
+  .full-screen-explore-container.sidebar-collapsed .visualization-pane-container {
+    border-left: none;
+  }
+
+  .full-screen-explore-container.sidebar-collapsed .filter-table-container {
+    overflow: hidden;
+    padding: 0;
+  }
+
+  .full-screen-explore-container.sidebar-expanded .visualization-pane-container {
+    overflow: hidden;
+    border-left: none;
+  }
+
+  .full-screen-explore-container.sidebar-expanded .filter-table-container {
+    padding: 0;
+  }
+
+  /* FAB button to reopen sidebar from collapsed state */
+  .fab-expand-button {
+    position: absolute;
+    top: 50%;
+    right: 16px;
+    transform: translateY(-50%);
+    z-index: 20;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    background: var(--glass-bg-solid, rgba(255, 255, 255, 0.92));
+    border: 1px solid var(--glass-border-subtle, rgba(0, 0, 0, 0.06));
+    border-radius: 50%;
+    box-shadow: var(--glass-shadow, 0 4px 24px rgba(0, 0, 0, 0.05));
+    cursor: pointer;
+    color: var(--text-color-text-main, #262a30);
+    transition: all 0.2s ease;
+    opacity: 0;
+    animation: fabFadeIn 0.3s ease 0.3s forwards;
+  }
+
+  .fab-expand-button:hover {
+    box-shadow: var(--glass-shadow-hover, 0 8px 32px rgba(0, 0, 0, 0.08));
+    background: var(--interactions---secondary-color-interaction-secondary-hover, #f9f4f2);
+  }
+
+  @keyframes fabFadeIn {
+    from { opacity: 0; transform: translateY(-50%) scale(0.8); }
+    to { opacity: 1; transform: translateY(-50%) scale(1); }
+  }
+
+  /* Sidebar toggle area (lives on the divider edge) */
+  .sidebar-toggle-area {
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 32px;
+    z-index: 15;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+  }
+
+  .drag-handle-zone {
+    position: absolute;
+    left: -15px;
+    top: 0;
+    bottom: 0;
+    width: 30px;
+    cursor: ew-resize;
+    z-index: 1;
+  }
+
+  .sidebar-toggle-button {
+    position: relative;
+    z-index: 2;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    background: var(--glass-bg-solid, rgba(255, 255, 255, 0.92));
+    border: 1px solid var(--glass-border-subtle, rgba(0, 0, 0, 0.06));
+    border-radius: var(--radius-sm, 8px);
+    cursor: pointer;
+    color: var(--text-color-text-subtle, #757575);
+    transition: all 0.15s ease;
+    padding: 0;
+  }
+
+  .sidebar-toggle-button:hover {
+    background: var(--interactions---secondary-color-interaction-secondary-hover, #f9f4f2);
+    color: var(--text-color-text-main, #262a30);
+    box-shadow: var(--glass-shadow, 0 4px 24px rgba(0, 0, 0, 0.05));
+  }
+
+  /* Prominent banner button to enter carousel from normal mode */
+  .carousel-banner-button {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    width: calc(100% - 24px);
+    margin: 8px 12px 12px 12px;
+    padding: 12px 20px;
+    background: var(--glass-bg, rgba(255, 255, 255, 0.6));
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1.5px solid var(--glass-border-subtle, rgba(0, 0, 0, 0.08));
+    border-radius: var(--radius-md, 12px);
+    cursor: pointer;
+    font-family: 'Golos Text', system-ui, sans-serif;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-color-text-main, #262a30);
+    transition: all 0.2s ease;
+  }
+
+  .carousel-banner-button:hover {
+    background: var(--interactions---secondary-color-interaction-secondary-hover, #f9f4f2);
+    border-color: #b87333;
+    box-shadow: var(--glass-shadow, 0 4px 24px rgba(0, 0, 0, 0.05));
+  }
+
+  .carousel-banner-button .carousel-banner-arrow {
+    margin-left: auto;
+    opacity: 0.5;
+    transition: transform 0.2s ease, opacity 0.2s ease;
+  }
+
+  .carousel-banner-button:hover .carousel-banner-arrow {
+    transform: translateX(3px);
+    opacity: 1;
+  }
+
+  /* Back to Map button in carousel (expanded) mode */
+  .carousel-back-button {
+    position: absolute;
+    top: 12px;
+    left: 12px;
+    z-index: 20;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 16px;
+    background: var(--glass-bg-solid, rgba(255, 255, 255, 0.92));
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid var(--glass-border-subtle, rgba(0, 0, 0, 0.08));
+    border-radius: var(--radius-sm, 8px);
+    cursor: pointer;
+    font-family: 'Golos Text', system-ui, sans-serif;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-color-text-subtle, #757575);
+    transition: all 0.2s ease;
+  }
+
+  .carousel-back-button:hover {
+    background: var(--interactions---secondary-color-interaction-secondary-hover, #f9f4f2);
+    color: var(--text-color-text-main, #262a30);
+    box-shadow: var(--glass-shadow, 0 4px 24px rgba(0, 0, 0, 0.05));
+  }
+
+  @media (prefers-color-scheme: dark) {
+    .fab-expand-button {
+      background: var(--glass-bg-solid, rgba(30, 30, 30, 0.92));
+      color: var(--text-color-text-main, #e7e7e7);
+    }
+
+    .fab-expand-button:hover {
+      background: var(--interactions---secondary-color-interaction-secondary-hover, #3d3d3d);
+    }
+
+    .sidebar-toggle-button {
+      background: var(--glass-bg-solid, rgba(30, 30, 30, 0.92));
+      color: var(--text-color-text-subtle, #a0a0a0);
+    }
+
+    .sidebar-toggle-button:hover {
+      background: var(--interactions---secondary-color-interaction-secondary-hover, #3d3d3d);
+      color: var(--text-color-text-main, #e7e7e7);
+    }
+
+    .carousel-banner-button {
+      background: var(--glass-bg, rgba(30, 30, 30, 0.6));
+      color: var(--text-color-text-main, #e7e7e7);
+      border-color: var(--glass-border-subtle, rgba(255, 255, 255, 0.08));
+    }
+
+    .carousel-banner-button:hover {
+      background: var(--interactions---secondary-color-interaction-secondary-hover, #3d3d3d);
+      border-color: #b87333;
+    }
+
+    .carousel-back-button {
+      background: var(--glass-bg-solid, rgba(30, 30, 30, 0.92));
+      color: var(--text-color-text-subtle, #a0a0a0);
+    }
+
+    .carousel-back-button:hover {
+      background: var(--interactions---secondary-color-interaction-secondary-hover, #3d3d3d);
+      color: var(--text-color-text-main, #e7e7e7);
+    }
+  }

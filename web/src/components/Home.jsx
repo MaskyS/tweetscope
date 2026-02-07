@@ -1,15 +1,21 @@
 import { useEffect, useState, useCallback } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import PropTypes from 'prop-types';
 import { jobPolling } from './Job/Run';
 import JobProgress from './Job/Progress';
-import HFDownload from './HFDownload';
 import { Button, Input } from 'react-element-forge';
 import { apiUrl, apiService } from '../lib/apiService';
+import { extractTwitterArchiveForImport } from '../lib/twitterArchiveParser';
 const readonly = import.meta.env.MODE == 'read_only';
 
 import './Home.css';
 
-function Home() {
+function Home({ appConfig = null }) {
+  const features = appConfig?.features || {};
+  const limits = appConfig?.limits || {};
+  const canTwitterImport = features.twitter_import ?? !readonly;
+  const maxUploadMb = limits.max_upload_mb;
+
   const [datasets, setDatasets] = useState([]);
 
   useEffect(() => {
@@ -33,114 +39,254 @@ function Home() {
     console.log('scopes', scopes);
   }, [scopes]);
 
-  const [ingestJob, setIngestJob] = useState(null);
-  const handleNewDataset = (event) => {
-    event.preventDefault();
-    const dataset = event.target[1].value;
-    const files = event.target[0].files;
-    const file = files[0];
-    const formData = new FormData();
-    formData.append('dataset', dataset);
-    formData.append('file', file);
-
-    fetch(`${apiUrl}/jobs/ingest`, {
-      method: 'POST',
-      body: formData,
-    })
-      .then((response) => response.json())
-      .then((data) => {
-        console.log('Job ID:', data.job_id);
-        jobPolling({ id: dataset }, setIngestJob, data.job_id);
-      })
-      .catch((error) => {
-        console.error('Error:', error);
-      });
-  };
-
-  const handleDragOver = (event) => {
-    event.preventDefault();
-  };
+  const parseApiResponse = useCallback(async (response) => {
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(data?.error || `Request failed (${response.status})`);
+    }
+    return data;
+  }, []);
 
   function sanitizeName(fileName) {
     let datasetName = fileName.substring(0, fileName.lastIndexOf('.'));
     datasetName = datasetName.replace(/\s/g, '-');
     return datasetName;
   }
-  const [datasetName, setDatasetName] = useState('');
-  const [nameTaken, setNameTaken] = useState(false);
-
-  const handleFileChange = useCallback(
-    (event) => {
-      const fileName = event.target.files[0].name;
-      const suggestedName = sanitizeName(fileName);
-      const isNameTaken = datasets.some((dataset) => dataset.id === suggestedName);
-
-      setDatasetName(suggestedName);
-      setNameTaken(isNameTaken);
-    },
-    [datasets]
-  );
-
-  const handleDrop = (event) => {
-    event.preventDefault();
-    document.getElementById('upload-button').files = event.dataTransfer.files;
-    const fileName = event.dataTransfer.files[0].name;
-    const suggestedName = sanitizeName(fileName);
-
-    const isNameTaken = datasets.some((dataset) => dataset.id === suggestedName);
-    setDatasetName(suggestedName);
-    setNameTaken(isNameTaken);
-  };
-
-  const handleNameChange = (e) => {
-    const newName = e.target.value;
-    setDatasetName(newName);
-    const isNameTaken = datasets.some((dataset) => dataset.id === newName);
-    setNameTaken(isNameTaken);
-  };
 
   const navigate = useNavigate();
-  useEffect(() => {
-    if (ingestJob && ingestJob.status === 'completed') {
-      setTimeout(function () {
-        navigate(`/datasets/${ingestJob.dataset}/setup`);
-      }, 1000);
+
+  const [twitterImportJob, setTwitterImportJob] = useState(null);
+  const [twitterArchiveFile, setTwitterArchiveFile] = useState(null);
+  const [twitterArchiveDatasetName, setTwitterArchiveDatasetName] = useState('');
+  const [twitterArchiveYear, setTwitterArchiveYear] = useState('');
+  const [processArchiveLocally, setProcessArchiveLocally] = useState(true);
+  const [twitterArchiveExtracting, setTwitterArchiveExtracting] = useState(false);
+  const [localExtractedRecordCount, setLocalExtractedRecordCount] = useState(null);
+
+  const [communityUsername, setCommunityUsername] = useState('');
+  const [communityDatasetName, setCommunityDatasetName] = useState('');
+  const [communityYear, setCommunityYear] = useState('');
+  const [twitterImportError, setTwitterImportError] = useState('');
+
+  const handleTwitterArchiveSelected = useCallback((event) => {
+    const file = event.target.files?.[0];
+    setTwitterArchiveFile(file || null);
+    setLocalExtractedRecordCount(null);
+    if (file?.name) {
+      setTwitterArchiveDatasetName(sanitizeName(file.name));
     }
-  }, [ingestJob, navigate]);
+  }, []);
+
+  const submitTwitterArchiveImport = useCallback(
+    async (event) => {
+      event.preventDefault();
+      if (!twitterArchiveFile || !twitterArchiveDatasetName) return;
+      setTwitterImportError('');
+      setTwitterImportJob(null);
+      setLocalExtractedRecordCount(null);
+      const formData = new FormData();
+      formData.append('dataset', twitterArchiveDatasetName);
+      formData.append('run_pipeline', 'true');
+      if (twitterArchiveYear) {
+        formData.append('year', twitterArchiveYear);
+      }
+      try {
+        if (processArchiveLocally) {
+          setTwitterArchiveExtracting(true);
+          const extracted = await extractTwitterArchiveForImport(twitterArchiveFile);
+          const recordCount =
+            extracted?.total_count ||
+            (extracted?.tweet_count || extracted?.tweets?.length || 0) +
+              (extracted?.likes_count || extracted?.likes?.length || 0);
+          setLocalExtractedRecordCount(recordCount || null);
+          const payload = JSON.stringify(extracted);
+          const extractedFile = new File([payload], `twitter-extract-${Date.now()}.json`, {
+            type: 'application/json',
+          });
+          formData.append('source_type', 'community_json');
+          formData.append('file', extractedFile);
+        } else {
+          formData.append('source_type', 'zip');
+          formData.append('file', twitterArchiveFile);
+        }
+
+        const data = await fetch(`${apiUrl}/jobs/import_twitter`, {
+          method: 'POST',
+          body: formData,
+        }).then(parseApiResponse);
+        jobPolling({ id: data.dataset || twitterArchiveDatasetName }, setTwitterImportJob, data.job_id);
+      } catch (error) {
+        console.error('Error:', error);
+        setTwitterImportError(error.message || 'Failed to start import');
+      } finally {
+        setTwitterArchiveExtracting(false);
+      }
+    },
+    [
+      twitterArchiveFile,
+      twitterArchiveDatasetName,
+      twitterArchiveYear,
+      parseApiResponse,
+      processArchiveLocally,
+    ]
+  );
+
+  const submitCommunityImport = useCallback(
+    (event) => {
+      event.preventDefault();
+      if (!communityUsername || !communityDatasetName) return;
+      setTwitterImportError('');
+      setTwitterImportJob(null);
+
+      const formData = new FormData();
+      formData.append('dataset', communityDatasetName);
+      formData.append('source_type', 'community');
+      formData.append('run_pipeline', 'true');
+      formData.append('username', communityUsername);
+      if (communityYear) {
+        formData.append('year', communityYear);
+      }
+
+      fetch(`${apiUrl}/jobs/import_twitter`, {
+        method: 'POST',
+        body: formData,
+      })
+        .then(parseApiResponse)
+        .then((data) => {
+          jobPolling({ id: data.dataset || communityDatasetName }, setTwitterImportJob, data.job_id);
+        })
+        .catch((error) => {
+          console.error('Error:', error);
+          setTwitterImportError(error.message || 'Failed to start import');
+        });
+    },
+    [communityUsername, communityDatasetName, communityYear, parseApiResponse]
+  );
+
+  useEffect(() => {
+    if (!twitterImportJob || twitterImportJob.status !== 'completed') return;
+
+    const datasetId = twitterImportJob.dataset;
+    const scopeId = twitterImportJob.scope_id;
+    if (datasetId && scopeId) {
+      navigate(`/datasets/${datasetId}/explore/${scopeId}`);
+      return;
+    }
+
+    if (datasetId) {
+      apiService.fetchScopes(datasetId).then((scopeRows) => {
+        const sorted = [...scopeRows].sort((a, b) => a.id.localeCompare(b.id));
+        const latest = sorted[sorted.length - 1];
+        if (latest?.id) {
+          navigate(`/datasets/${datasetId}/explore/${latest.id}`);
+        } else {
+          navigate('/import');
+        }
+      });
+    }
+  }, [twitterImportJob, navigate]);
+
+  const twitterArchiveNameTaken = datasets.some((dataset) => dataset.id === twitterArchiveDatasetName);
+  const communityNameTaken = datasets.some((dataset) => dataset.id === communityDatasetName);
 
   return (
     <div className="home">
-      {readonly ? null : (
+      {readonly || !canTwitterImport ? null : (
         <div className="new section">
           <div className="new-dataset">
-            <form onSubmit={handleNewDataset} onDragOver={handleDragOver} onDrop={handleDrop}>
-              <h3>Create new dataset</h3>
-              <label htmlFor="upload-button">
-                <span>Import a CSV/Parquet/JSON/JSONL/XLSX file to create a new dataset</span>
+            <form onSubmit={submitTwitterArchiveImport}>
+              <h3>Import native X archive</h3>
+              <label htmlFor="twitter-archive-upload">
+                <span>Upload your X export zip and auto-build your knowledge index</span>
               </label>
-              <input hidden id="upload-button" type="file" onChange={handleFileChange} />
+              {maxUploadMb ? <span>Upload limit: {maxUploadMb} MB</span> : null}
+              <label htmlFor="twitter-local-parse">
+                <input
+                  id="twitter-local-parse"
+                  type="checkbox"
+                  checked={processArchiveLocally}
+                  onChange={(e) => setProcessArchiveLocally(e.target.checked)}
+                />
+                <span>Process archive locally in browser before upload (privacy mode)</span>
+              </label>
+              {processArchiveLocally ? <span>Uploads extracted tweet JSON instead of raw zip.</span> : null}
+              <input
+                id="twitter-archive-upload"
+                type="file"
+                accept=".zip"
+                onChange={handleTwitterArchiveSelected}
+              />
               <Input
-                id="dataset-name"
+                id="twitter-archive-dataset-name"
                 type="text"
                 placeholder="Dataset name"
-                value={datasetName}
-                onChange={handleNameChange}
+                value={twitterArchiveDatasetName}
+                onChange={(e) => setTwitterArchiveDatasetName(e.target.value)}
               />
-              {nameTaken ? (
+              <Input
+                id="twitter-archive-year"
+                type="number"
+                placeholder="Optional year filter (e.g. 2025)"
+                value={twitterArchiveYear}
+                onChange={(e) => setTwitterArchiveYear(e.target.value)}
+              />
+              {twitterArchiveNameTaken ? (
                 <div className="name-taken-warning">This dataset name is already taken.</div>
               ) : null}
-              <Button type="submit" disabled={nameTaken || !datasetName} text="Submit" />
+              <Button
+                type="submit"
+                disabled={
+                  !twitterArchiveFile ||
+                  !twitterArchiveDatasetName ||
+                  twitterArchiveNameTaken ||
+                  twitterArchiveExtracting
+                }
+                text={twitterArchiveExtracting ? 'Processing archive locally...' : 'Import Archive'}
+              />
             </form>
-            <JobProgress job={ingestJob} clearJob={() => setIngestJob(null)} />
+            {localExtractedRecordCount ? (
+              <span>Prepared {localExtractedRecordCount} tweet/like records locally for upload.</span>
+            ) : null}
           </div>
           <div className="hf-downloader">
-            <h3>Download a scoped dataset from Hugging Face</h3>
-            <HFDownload
-              onComplete={() => {
-                apiService.fetchDatasets().then(setDatasets);
-              }}
-            />
+            <form onSubmit={submitCommunityImport}>
+              <h3>Import from Community Archive</h3>
+              <label htmlFor="community-username">
+                <span>Fetch a public archive by username and auto-build your knowledge index</span>
+              </label>
+              <Input
+                id="community-username"
+                type="text"
+                placeholder="Username (without @)"
+                value={communityUsername}
+                onChange={(e) => setCommunityUsername(e.target.value)}
+              />
+              <Input
+                id="community-dataset-name"
+                type="text"
+                placeholder="Dataset name"
+                value={communityDatasetName}
+                onChange={(e) => setCommunityDatasetName(e.target.value)}
+              />
+              <Input
+                id="community-year"
+                type="number"
+                placeholder="Optional year filter (e.g. 2025)"
+                value={communityYear}
+                onChange={(e) => setCommunityYear(e.target.value)}
+              />
+              {communityNameTaken ? (
+                <div className="name-taken-warning">This dataset name is already taken.</div>
+              ) : null}
+              <Button
+                type="submit"
+                disabled={!communityUsername || !communityDatasetName || communityNameTaken}
+                text="Import Community Archive"
+              />
+            </form>
           </div>
+          {twitterImportError ? <div className="name-taken-warning">{twitterImportError}</div> : null}
+          <JobProgress job={twitterImportJob} clearJob={() => setTwitterImportJob(null)} />
         </div>
       )}
 
@@ -151,8 +297,7 @@ function Home() {
             <div className="dataset" key={dataset.id}>
               <h3>
                 {' '}
-                {dataset.id} &nbsp;
-                {readonly ? null : <Link to={`/datasets/${dataset.id}/setup`}>Setup</Link>}
+                {dataset.id}
               </h3>
               <span>{dataset.length} rows</span>
               <div className="scope-links">
@@ -173,18 +318,6 @@ function Home() {
                       </Link>
                       <br />
                       <span className="scope-description">{scope.description}</span>
-                      <br />
-                      {readonly ? null : (
-                        <Link to={`/datasets/${dataset.id}/setup/${scope.id}`}>Configure</Link>
-                      )}
-                      {readonly ? null : (
-                        <>
-                          {' '}
-                          | <Link to={`/datasets/${dataset.id}/export/${scope.id}`}>
-                            Export
-                          </Link>{' '}
-                        </>
-                      )}
                     </div>
                   ))}
               </div>
@@ -195,5 +328,9 @@ function Home() {
     </div>
   );
 }
+
+Home.propTypes = {
+  appConfig: PropTypes.object,
+};
 
 export default Home;
