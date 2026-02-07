@@ -208,7 +208,16 @@ export function ScopeProvider({ children }) {
   const fetchScopeRows = useCallback(() => {
     fetch(`${apiUrl}/datasets/${datasetId}/scopes/${scope.id}/parquet`)
       .then((response) => response.json())
-      .then((scopeRows) => {
+      .then((scopeRowsResponse) => {
+        const scopeRows = (scopeRowsResponse || []).map((row, idx) => {
+          const lsIndexRaw = row?.ls_index ?? row?.index ?? idx;
+          const lsIndex = Number.isFinite(Number(lsIndexRaw)) ? Number(lsIndexRaw) : idx;
+          return {
+            ...row,
+            ls_index: lsIndex,
+          };
+        });
+
         setScopeRows(scopeRows);
         let clusterMap = {};
         let nonDeletedClusters = new Set();
@@ -282,7 +291,7 @@ export function ScopeProvider({ children }) {
     if (scope) fetchScopeRows();
   }, [scope, fetchScopeRows]);
 
-  const value = {
+  const value = useMemo(() => ({
     userId,
     datasetId,
     scopeId,
@@ -300,7 +309,11 @@ export function ScopeProvider({ children }) {
     scopes,
     embeddings,
     tags,
-  };
+  }), [
+    userId, datasetId, scopeId, dataset, scope, sae, scopeLoaded,
+    clusterMap, clusterLabels, clusterHierarchy, scopeRows,
+    deletedIndices, features, setFeatures, scopes, embeddings, tags,
+  ]);
 
   return <ScopeContext.Provider value={value}>{children}</ScopeContext.Provider>;
 }

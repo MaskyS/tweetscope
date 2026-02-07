@@ -235,8 +235,79 @@ def get_dataset_scope(dataset, scope):
 @datasets_bp.route('/<dataset>/scopes/<scope>/parquet', methods=['GET'])
 def get_dataset_scope_parquet(dataset, scope):
     directory_path = os.path.join(DATA_DIR, dataset, "scopes")
-    file_path = os.path.join(directory_path, scope + ".parquet")
-    df = pd.read_parquet(file_path)
+    scope_file_path = os.path.join(directory_path, scope + ".parquet")
+    scope_input_file_path = os.path.join(directory_path, scope + "-input.parquet")
+    dataset_input_file_path = os.path.join(DATA_DIR, dataset, "input.parquet")
+
+    required_columns = [
+        "x",
+        "y",
+        "cluster",
+        "label",
+        "deleted",
+        "ls_index",
+        "tile_index_64",
+        "tile_index_128",
+    ]
+    engagement_columns = [
+        "favorites",
+        "favorite_count",
+        "likes",
+        "like_count",
+        "retweets",
+        "retweet_count",
+        "replies",
+        "reply_count",
+        "created_at",
+        "tweet_type",
+        "is_like",
+        "is_retweet",
+        "is_reply",
+    ]
+
+    # Prefer the combined scope-input parquet when available so the frontend can
+    # use engagement/date metadata for visualization logic (e.g. node sizing),
+    # while still returning a compact payload (no full text/body fields).
+    if os.path.exists(scope_input_file_path):
+        df = pd.read_parquet(scope_input_file_path)
+    else:
+        df = pd.read_parquet(scope_file_path)
+
+        # Backward-compatible fallback: older scopes may not have <scope>-input.parquet.
+        # In that case, enrich from dataset input.parquet so node sizing and hover
+        # metadata can still use engagement + recency fields.
+        if os.path.exists(dataset_input_file_path) and "ls_index" in df.columns:
+            input_df = pd.read_parquet(dataset_input_file_path)
+
+            # The canonical row id may live in the input index; normalize to ls_index.
+            if "ls_index" not in input_df.columns:
+                input_df = input_df.reset_index()
+                if "index" in input_df.columns:
+                    input_df = input_df.rename(columns={"index": "ls_index"})
+
+            input_keep_cols = ["ls_index"] + [
+                col for col in engagement_columns if col in input_df.columns
+            ]
+
+            if "ls_index" in input_df.columns and len(input_keep_cols) > 1:
+                input_lookup = input_df[input_keep_cols]
+                df = df.merge(input_lookup, on="ls_index", how="left", sort=False)
+
+    # Some scope-input parquet files carry source row ids in `index` (from
+    # input.parquet reset_index) instead of `ls_index`. Normalize so frontend
+    # filtering/pagination can always rely on `ls_index`.
+    if "ls_index" not in df.columns:
+        if "index" in df.columns:
+            df = df.rename(columns={"index": "ls_index"})
+        else:
+            # Last-resort fallback: preserve row identity within this payload.
+            df = df.reset_index(drop=True)
+            df["ls_index"] = df.index
+
+    selected_columns = [col for col in required_columns + engagement_columns if col in df.columns]
+    if selected_columns:
+        df = df[selected_columns]
+
     return df.to_json(orient="records")
 
 @datasets_write_bp.route('/<dataset>/scopes/<scope>/description', methods=['GET'])

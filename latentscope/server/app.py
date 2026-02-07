@@ -234,7 +234,7 @@ Given a list of indices (passed as a json array), return the rows from the datas
 def indexed():
     data = request.get_json()
     dataset = data['dataset']
-    indices = data['indices']
+    indices = data.get('indices', [])
     columns = data.get('columns')
     embedding_id = data.get('embedding_id')
     sae_id = data.get('sae_id')
@@ -249,10 +249,44 @@ def indexed():
 
     if columns:
         df = df[columns]
-    
-    # get the indexed rows, handling missing indices
-    valid_indices = [i for i in indices if i < len(df)]
-    rows = df.iloc[valid_indices]
+
+    if indices is None:
+        indices = []
+    if not isinstance(indices, list):
+        indices = [indices]
+
+    def normalize_index(value):
+        if value is None or isinstance(value, bool):
+            return None
+
+        if isinstance(value, (int, np.integer)):
+            return int(value)
+
+        if isinstance(value, float):
+            if math.isfinite(value) and value.is_integer():
+                return int(value)
+            return None
+
+        if isinstance(value, str):
+            stripped = value.strip()
+            if not stripped:
+                return None
+            try:
+                parsed = float(stripped)
+            except ValueError:
+                return None
+            if math.isfinite(parsed) and parsed.is_integer():
+                return int(parsed)
+            return None
+
+        return None
+
+    # get the indexed rows, handling null/invalid/missing indices
+    valid_indices = [
+        idx for idx in (normalize_index(i) for i in indices)
+        if idx is not None and 0 <= idx < len(df)
+    ]
+    rows = df.iloc[valid_indices].copy()
     rows['index'] = valid_indices
 
     if embedding_id:
@@ -327,6 +361,7 @@ def query():
     dataset = data['dataset']
     page = data['page'] if 'page' in data else 0
     indices = data['indices'] if 'indices' in data else []
+    columns = data.get('columns') if 'columns' in data else None
     embedding_id = data['embedding_id'] if 'embedding_id' in data else None
     sae_id = data.get('sae_id') if 'sae_id' in data else None
 
@@ -341,6 +376,12 @@ def query():
     # apply filters
     rows = df.copy()
     rows['ls_index'] = rows.index
+
+    if columns:
+        safe_columns = [col for col in columns if col in rows.columns]
+        if 'ls_index' not in safe_columns:
+            safe_columns.append('ls_index')
+        rows = rows[safe_columns]
     
 
     # get the indexed rows
