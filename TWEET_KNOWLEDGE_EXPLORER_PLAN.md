@@ -17,6 +17,13 @@ Completed in current codebase:
    - Browser-side local extraction now includes likes in extracted JSON.
    - Community extracted JSON import path now ingests likes.
    - Normalized schema includes `tweet_type=like`, `liked_tweet_id`, and `is_like`.
+4. Dead product surfaces removed:
+   - Deleted old setup/settings/jobs/export/compare/datamap pages and setup-related components/contexts.
+   - Removed legacy model/settings/huggingface utility components tied to deleted flows.
+   - Removed the old left icon rail and old dataset/scope dropdown pattern from active UX.
+5. Header/navigation simplification:
+   - Logo/header now floats as an overlay badge on top of the graph area.
+   - Explore subnav now shows archive context and `Switch Archive` only.
 
 ## Direction
 Reposition this project as a Twitter/X personal knowledge product with one core loop:

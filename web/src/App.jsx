@@ -22,7 +22,7 @@ function App() {
       .fetchAppConfig()
       .then(setAppConfig)
       .catch(() => {
-        // Fallback keeps existing studio behavior if backend route is unavailable.
+        // Fallback keeps hosted behavior if backend route is unavailable.
         setAppConfig({
           mode: 'hosted',
           read_only: false,
@@ -61,7 +61,6 @@ function App() {
     return <div>Loading...</div>;
   }
 
-  const features = appConfig.features || {};
   const isSingleProfile = appConfig.mode === 'single_profile';
   const publicPath =
     appConfig.public_dataset_id && appConfig.public_scope_id
@@ -70,7 +69,7 @@ function App() {
 
   return (
     <Router basename={env.BASE_NAME}>
-      <Nav showSettings={!!features.can_settings} />
+      <Nav />
       <div className="page">
         <Routes>
           {isSingleProfile ? (
