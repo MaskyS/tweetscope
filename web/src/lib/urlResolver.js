@@ -13,7 +13,6 @@ class UrlResolver {
   }
 
   async resolve(urls) {
-    console.log('[urlResolver.resolve] Called with:', urls);
     if (!urls || urls.length === 0) return [];
 
     // Check cache first
@@ -22,11 +21,9 @@ class UrlResolver {
 
     for (const url of urls) {
       if (this.cache.has(url)) {
-        console.log('[urlResolver.resolve] Cache hit:', url);
         results.push(this.cache.get(url));
       } else if (this.pending.has(url)) {
         // Wait for pending request
-        console.log('[urlResolver.resolve] Pending, waiting:', url);
         results.push(await this.pending.get(url));
       } else {
         uncached.push(url);
@@ -34,11 +31,8 @@ class UrlResolver {
     }
 
     if (uncached.length === 0) {
-      console.log('[urlResolver.resolve] All cached, returning:', results);
       return results;
     }
-
-    console.log('[urlResolver.resolve] Uncached URLs:', uncached);
 
     // Create promise for these URLs
     const promise = this._queueResolve(uncached);
@@ -51,7 +45,6 @@ class UrlResolver {
     }
 
     const resolved = await promise;
-    console.log('[urlResolver.resolve] Resolved:', resolved);
 
     // Cache results and clear pending
     for (const result of resolved) {
@@ -60,7 +53,6 @@ class UrlResolver {
     }
 
     const finalResults = [...results, ...resolved];
-    console.log('[urlResolver.resolve] Returning final results:', finalResults);
     return finalResults;
   }
 
@@ -92,7 +84,6 @@ class UrlResolver {
 
       try {
         const data = await apiService.resolveUrls(uniqueUrls);
-        console.log('[urlResolver] Raw API response:', JSON.stringify(data, null, 2));
         const results = data.results || [];
 
         // Resolve all waiting promises

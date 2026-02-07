@@ -1,6 +1,6 @@
 import { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { ChevronsRight, ChevronsLeft, Columns3, PanelRightClose, PanelRightOpen } from 'lucide-react';
+import { ChevronsRight, ChevronsLeft, GalleryHorizontalEnd, PanelRightClose, PanelRightOpen } from 'lucide-react';
 
 import './Explore.css';
 import { apiService } from '../../lib/apiService';
@@ -10,14 +10,20 @@ import VisualizationPane from '../../components/Explore/V2/VisualizationPane';
 import TweetFeed from '../../components/Explore/V2/TweetFeed';
 import TopicTree from '../../components/Explore/V2/TopicTree';
 import FeedCarousel from '../../components/Explore/V2/Carousel/FeedCarousel';
+import ThreadView from '../../components/Explore/V2/ThreadView/ThreadView';
+import QuoteView from '../../components/Explore/V2/ThreadView/QuoteView';
 
 import { ScopeProvider, useScope } from '../../contexts/ScopeContext';
 import { FilterProvider, useFilter } from '../../contexts/FilterContext';
 import useDebounce from '../../hooks/useDebounce';
 import useSidebarState, { SIDEBAR_MODES } from '../../hooks/useSidebarState';
 import useCarouselData from '../../hooks/useCarouselData';
+import useTimelineData from '../../hooks/useTimelineData';
+import useNodeStats from '../../hooks/useNodeStats';
 
 import { filterConstants } from '../../components/Explore/V2/Search/utils';
+
+const EDGE_FETCH_MAX = 2500;
 
 const HOVER_METADATA_COLUMNS = [
   'id',
@@ -37,7 +43,34 @@ const HOVER_METADATA_COLUMNS = [
   'published_at',
   'tweet_type',
   'is_like',
+  'urls_json',
+  'media_urls_json',
 ];
+
+function clampRangeToDomain(range, domain) {
+  if (!range || !domain || domain.length !== 2) return null;
+  const [rawStart, rawEnd] = range;
+  const [domainStart, domainEnd] = domain;
+  if (
+    !Number.isFinite(rawStart) ||
+    !Number.isFinite(rawEnd) ||
+    !Number.isFinite(domainStart) ||
+    !Number.isFinite(domainEnd)
+  ) {
+    return null;
+  }
+
+  const minDomain = Math.min(domainStart, domainEnd);
+  const maxDomain = Math.max(domainStart, domainEnd);
+  const start = Math.max(minDomain, Math.min(maxDomain, rawStart));
+  const end = Math.max(minDomain, Math.min(maxDomain, rawEnd));
+  return start <= end ? [start, end] : [end, start];
+}
+
+function formatTimelineRangeLabel(range) {
+  if (!range) return '';
+  return `${new Date(range[0]).toLocaleDateString('en-US', { month: 'short', year: 'numeric' })} — ${new Date(range[1]).toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}`;
+}
 
 // Create a new component that wraps the main content
 function ExploreContent() {
@@ -71,6 +104,7 @@ function ExploreContent() {
     clusterFilter,
     searchFilter,
     setFilterConfig,
+    filterActive,
     setFilterActive,
     setUrlParams,
   } = useFilter();
@@ -86,6 +120,11 @@ function ExploreContent() {
     focusedClusterIndex,
     setFocusedClusterIndex,
     savedGraphViewState,
+    threadTargetIndex,
+    threadTargetTweetId,
+    openThread,
+    openQuotes,
+    closeThread,
   } = useSidebarState();
 
   // Carousel data hook — only enabled in expanded mode
@@ -102,10 +141,250 @@ function ExploreContent() {
   const [hoverAnnotations, setHoverAnnotations] = useState([]);
   const [dataTableRows, setDataTableRows] = useState([]);
   const [selectedAnnotations, setSelectedAnnotations] = useState([]);
+  const [linksMeta, setLinksMeta] = useState(null);
+  const [linksAvailable, setLinksAvailable] = useState(false);
+  const [linksLoading, setLinksLoading] = useState(false);
+  const [linksEdges, setLinksEdges] = useState([]);
+  const [threadHighlightIndices, setThreadHighlightIndices] = useState(null);
+  const [threadLinksEdges, setThreadLinksEdges] = useState([]);
+  const [threadLinksLoading, setThreadLinksLoading] = useState(false);
+
+  // Node link stats (thread/quote metadata per tweet)
+  const { statsMap: nodeStats, tweetIdMap } = useNodeStats(dataset?.id, linksAvailable);
+
+  // ====================================================================================================
+  // Timeline state
+  // ====================================================================================================
+  const timelineData = useTimelineData(scopeRows);
+  const [timeRange, setTimeRange] = useState(null); // [startMs, endMs] | null
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [playbackSpeed, setPlaybackSpeed] = useState(1);
+  const [timelineStart, timelineEnd] = timelineData.domain;
+  const animFrameRef = useRef(null);
+  const lastFrameTimeRef = useRef(0);
+
+  // Track whether playback should stop (set inside rAF, read after)
+  const shouldStopRef = useRef(false);
+
+  // Playback animation loop
+  useEffect(() => {
+    if (!isPlaying || !timelineData.hasDates) return;
+
+    const totalDuration = timelineEnd - timelineStart;
+    if (totalDuration <= 0) {
+      const staticRange = [timelineStart, timelineStart];
+      setTimeRange(staticRange);
+      setFilterConfig({
+        type: filterConstants.TIME_RANGE,
+        start: staticRange[0],
+        end: staticRange[1],
+        timestampsByLsIndex: timelineData.timestampsByLsIndex,
+        label: formatTimelineRangeLabel(staticRange),
+      });
+      setFilterActive(true);
+      setIsPlaying(false);
+      return;
+    }
+
+    // At 1x: 15 seconds to sweep the entire range
+    const msPerSecond = (totalDuration / 15) * playbackSpeed;
+    shouldStopRef.current = false;
+
+    const animate = (timestamp) => {
+      const dt = timestamp - lastFrameTimeRef.current;
+      lastFrameTimeRef.current = timestamp;
+
+      setTimeRange((prev) => {
+        const currentRange = clampRangeToDomain(prev, [timelineStart, timelineEnd]) || [timelineStart, timelineStart];
+        const newEnd = Math.min(currentRange[1] + msPerSecond * (dt / 1000), timelineEnd);
+        if (newEnd >= timelineEnd) {
+          shouldStopRef.current = true;
+          return [currentRange[0], timelineEnd];
+        }
+        return [currentRange[0], newEnd];
+      });
+
+      if (shouldStopRef.current) {
+        setIsPlaying(false);
+      } else {
+        animFrameRef.current = requestAnimationFrame(animate);
+      }
+    };
+
+    lastFrameTimeRef.current = performance.now();
+    animFrameRef.current = requestAnimationFrame(animate);
+    return () => cancelAnimationFrame(animFrameRef.current);
+  }, [
+    isPlaying,
+    playbackSpeed,
+    timelineData.hasDates,
+    timelineData.timestampsByLsIndex,
+    timelineStart,
+    timelineEnd,
+    setFilterConfig,
+    setFilterActive,
+  ]);
+
+  const handlePlayToggle = useCallback(() => {
+    if (!isPlaying && timelineData.hasDates) {
+      const nextRange = clampRangeToDomain(timeRange, [timelineStart, timelineEnd]) || [timelineStart, timelineStart];
+      const playbackRange = [nextRange[0], nextRange[0]];
+      // Always reset end to start so playback sweeps from the chosen start
+      setTimeRange(playbackRange);
+      setFilterConfig({
+        type: filterConstants.TIME_RANGE,
+        start: playbackRange[0],
+        end: playbackRange[1],
+        timestampsByLsIndex: timelineData.timestampsByLsIndex,
+        label: formatTimelineRangeLabel(playbackRange),
+      });
+      setFilterActive(true);
+    }
+    setIsPlaying((p) => !p);
+  }, [
+    isPlaying,
+    timelineData.hasDates,
+    timelineData.timestampsByLsIndex,
+    timelineStart,
+    timelineEnd,
+    timeRange,
+    setFilterConfig,
+    setFilterActive,
+  ]);
+
+  // Bridge time range changes to FilterContext
+  const handleTimeRangeChange = useCallback(
+    (range) => {
+      const nextRange = clampRangeToDomain(range, [timelineStart, timelineEnd]);
+      setTimeRange(nextRange);
+      if (nextRange) {
+        setFilterConfig({
+          type: filterConstants.TIME_RANGE,
+          start: nextRange[0],
+          end: nextRange[1],
+          timestampsByLsIndex: timelineData.timestampsByLsIndex,
+          label: formatTimelineRangeLabel(nextRange),
+        });
+        setFilterActive(true);
+      } else if (filterConfig?.type === filterConstants.TIME_RANGE) {
+        setFilterConfig(null);
+        setFilterActive(false);
+      }
+    },
+    [
+      timelineStart,
+      timelineEnd,
+      timelineData.timestampsByLsIndex,
+      setFilterConfig,
+      setFilterActive,
+      filterConfig?.type,
+    ]
+  );
+
+  // Debounce filter updates during playback to avoid thrashing the data table
+  const playbackFilterTimerRef = useRef(null);
+  useEffect(() => {
+    if (!isPlaying || !timeRange) return;
+    if (playbackFilterTimerRef.current) clearTimeout(playbackFilterTimerRef.current);
+    const normalizedRange = clampRangeToDomain(timeRange, [timelineStart, timelineEnd]);
+    if (!normalizedRange) return;
+
+    playbackFilterTimerRef.current = setTimeout(() => {
+      setFilterConfig({
+        type: filterConstants.TIME_RANGE,
+        start: normalizedRange[0],
+        end: normalizedRange[1],
+        timestampsByLsIndex: timelineData.timestampsByLsIndex,
+        label: formatTimelineRangeLabel(normalizedRange),
+      });
+      setFilterActive(true);
+    }, 300);
+    return () => clearTimeout(playbackFilterTimerRef.current);
+  }, [
+    isPlaying,
+    timeRange,
+    timelineStart,
+    timelineEnd,
+    timelineData.timestampsByLsIndex,
+    setFilterConfig,
+    setFilterActive,
+  ]);
+
+  // Keep timeline filter state valid when scope/domain changes.
+  useEffect(() => {
+    if (filterConfig?.type !== filterConstants.TIME_RANGE) return;
+
+    if (!timelineData.hasDates) {
+      setIsPlaying(false);
+      setTimeRange(null);
+      setFilterConfig(null);
+      setFilterActive(false);
+      return;
+    }
+
+    const clampedFilterRange = clampRangeToDomain([filterConfig.start, filterConfig.end], [timelineStart, timelineEnd]);
+    if (!clampedFilterRange) {
+      setIsPlaying(false);
+      setTimeRange(null);
+      setFilterConfig(null);
+      setFilterActive(false);
+      return;
+    }
+
+    const nextLabel = formatTimelineRangeLabel(clampedFilterRange);
+    const shouldUpdateFilter =
+      filterConfig.start !== clampedFilterRange[0] ||
+      filterConfig.end !== clampedFilterRange[1] ||
+      filterConfig.timestampsByLsIndex !== timelineData.timestampsByLsIndex ||
+      filterConfig.label !== nextLabel;
+
+    if (shouldUpdateFilter) {
+      setFilterConfig({
+        type: filterConstants.TIME_RANGE,
+        start: clampedFilterRange[0],
+        end: clampedFilterRange[1],
+        timestampsByLsIndex: timelineData.timestampsByLsIndex,
+        label: nextLabel,
+      });
+    }
+
+    if (!isPlaying && (!timeRange || timeRange[0] !== clampedFilterRange[0] || timeRange[1] !== clampedFilterRange[1])) {
+      setTimeRange(clampedFilterRange);
+    }
+
+    if (!filterActive) {
+      setFilterActive(true);
+    }
+  }, [
+    filterConfig?.type,
+    filterConfig?.start,
+    filterConfig?.end,
+    filterConfig?.label,
+    filterConfig?.timestampsByLsIndex,
+    filterActive,
+    timelineData.hasDates,
+    timelineData.timestampsByLsIndex,
+    timelineStart,
+    timelineEnd,
+    isPlaying,
+    timeRange,
+    setFilterConfig,
+    setFilterActive,
+  ]);
+
+  // If another filter becomes active, clear timeline-local range to avoid divergent UI state.
+  useEffect(() => {
+    if (filterConfig?.type === filterConstants.TIME_RANGE) return;
+    if (isPlaying) setIsPlaying(false);
+    if (timeRange !== null) setTimeRange(null);
+  }, [filterConfig?.type, isPlaying, timeRange]);
 
   // Add a ref to track the latest requested index
   const latestHoverIndexRef = useRef(null);
   const hoverRecordCacheRef = useRef(new Map());
+  const latestLinksRequestRef = useRef(0);
+  const hoverDismissTimerRef = useRef(null);
+  const hoverCardHoveredRef = useRef(false);
 
   const hoverColumns = useMemo(() => {
     return Array.from(new Set([scope?.dataset?.text_column, ...HOVER_METADATA_COLUMNS].filter(Boolean)));
@@ -143,6 +422,46 @@ function ExploreContent() {
     hoverRecordCacheRef.current.clear();
     latestHoverIndexRef.current = null;
   }, [scope?.id]);
+
+  // Cleanup dismiss timer on unmount
+  useEffect(() => {
+    return () => {
+      if (hoverDismissTimerRef.current) {
+        clearTimeout(hoverDismissTimerRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    setLinksMeta(null);
+    setLinksAvailable(false);
+    setLinksEdges([]);
+    latestLinksRequestRef.current = 0;
+
+    if (!dataset?.id) return;
+
+    let cancelled = false;
+    apiService
+      .fetchLinksMeta(dataset.id)
+      .then((meta) => {
+        if (cancelled) return;
+        setLinksMeta(meta || null);
+        setLinksAvailable(true);
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        // A missing links graph is expected for datasets that haven't built artifacts yet.
+        if (error?.status !== 404) {
+          console.warn('Failed to load links metadata', error);
+        }
+        setLinksMeta(null);
+        setLinksAvailable(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [dataset?.id]);
 
   useEffect(() => {
     if (sidebarMode === SIDEBAR_MODES.EXPANDED) {
@@ -186,8 +505,148 @@ function ExploreContent() {
     }
   }, [sidebarMode, hoveredIndex, scopeRows]);
 
+  const edgeQueryIndices = useMemo(() => {
+    if (pinnedIndex !== null && pinnedIndex !== undefined && !deletedIndices.includes(pinnedIndex)) {
+      return [pinnedIndex];
+    }
+    if (hoveredIndex !== null && hoveredIndex !== undefined && !deletedIndices.includes(hoveredIndex)) {
+      return [hoveredIndex];
+    }
+    return [];
+  }, [pinnedIndex, hoveredIndex, deletedIndices]);
+
+  const fetchLinksEdges = useCallback(
+    (indices) => {
+      if (!dataset?.id || !linksAvailable || !Array.isArray(indices)) {
+        return;
+      }
+
+      const requestId = latestLinksRequestRef.current + 1;
+      latestLinksRequestRef.current = requestId;
+      setLinksLoading(true);
+
+      apiService
+        .fetchLinksByIndices(dataset.id, {
+          indices: indices.length > 0 ? indices : null,
+          edge_types: ['reply', 'quote'],
+          include_external: false,
+          max_edges: EDGE_FETCH_MAX,
+        })
+        .then((payload) => {
+          if (latestLinksRequestRef.current !== requestId) return;
+          const edges = Array.isArray(payload?.edges) ? payload.edges : [];
+          setLinksEdges(edges);
+        })
+        .catch((error) => {
+          if (latestLinksRequestRef.current !== requestId) return;
+          console.warn('Failed to load links edges', error);
+          setLinksEdges([]);
+        })
+        .finally(() => {
+          if (latestLinksRequestRef.current === requestId) {
+            setLinksLoading(false);
+          }
+        });
+    },
+    [dataset?.id, linksAvailable]
+  );
+
+  const debouncedFetchLinksEdges = useDebounce(fetchLinksEdges, 120);
+
+  useEffect(() => {
+    if (
+      sidebarMode === SIDEBAR_MODES.EXPANDED ||
+      sidebarMode === SIDEBAR_MODES.THREAD ||
+      sidebarMode === SIDEBAR_MODES.QUOTES ||
+      !linksAvailable
+    ) {
+      debouncedFetchLinksEdges.cancel?.();
+      setLinksEdges([]);
+      setLinksLoading(false);
+      return;
+    }
+
+    debouncedFetchLinksEdges(edgeQueryIndices);
+    return () => {
+      debouncedFetchLinksEdges.cancel?.();
+    };
+  }, [sidebarMode, linksAvailable, edgeQueryIndices, debouncedFetchLinksEdges]);
+
   // Handlers for responding to individual data points
   const handleClicked = useCallback(() => {}, []);
+
+  // Thread view handlers
+  const handleViewThread = useCallback((lsIndex) => {
+    const tid = tweetIdMap?.get(lsIndex);
+    if (!tid) return;
+    const graphViewState = vizRef.current?.getViewState?.();
+    openThread(lsIndex, tid, graphViewState);
+  }, [tweetIdMap, openThread]);
+
+  const handleViewQuotes = useCallback((lsIndex) => {
+    const tid = tweetIdMap?.get(lsIndex);
+    if (!tid) return;
+    const graphViewState = vizRef.current?.getViewState?.();
+    openQuotes(lsIndex, tid, graphViewState);
+  }, [tweetIdMap, openQuotes]);
+
+  const handleCloseThread = useCallback(() => {
+    const restoreViewState = savedGraphViewState;
+    closeThread();
+    if (restoreViewState) {
+      window.requestAnimationFrame(() => {
+        vizRef.current?.setViewState?.(restoreViewState, 260);
+      });
+    }
+  }, [closeThread, savedGraphViewState]);
+
+  const handleThreadDataChange = useCallback(({ internalIndices, edges, loading, error }) => {
+    setThreadLinksLoading(!!loading);
+
+    if (loading) {
+      setThreadHighlightIndices(null);
+      setThreadLinksEdges([]);
+      return;
+    }
+
+    if (error) {
+      setThreadHighlightIndices(null);
+      setThreadLinksEdges([]);
+      return;
+    }
+
+    if (!internalIndices || internalIndices.size === 0) {
+      setThreadHighlightIndices(null);
+      setThreadLinksEdges([]);
+      return;
+    }
+
+    const normalizedIndices = new Set(
+      Array.from(internalIndices)
+        .map((value) => Number(value))
+        .filter((value) => Number.isInteger(value))
+    );
+
+    const memberEdges = Array.isArray(edges)
+      ? edges.filter((edge) => {
+        if (String(edge?.edge_type || '').toLowerCase() !== 'reply') return false;
+        const src = Number(edge?.src_ls_index);
+        const dst = Number(edge?.dst_ls_index);
+        return normalizedIndices.has(src) && normalizedIndices.has(dst);
+      })
+      : [];
+
+    setThreadHighlightIndices(normalizedIndices);
+    setThreadLinksEdges(memberEdges);
+  }, []);
+
+  const clearHoverState = useCallback(() => {
+    setHoverAnchor(null);
+    setHoveredIndex(null);
+    setHoveredCluster(null);
+    setHovered(null);
+    latestHoverIndexRef.current = null;
+  }, []);
 
   const handleHover = useCallback(
     (payload) => {
@@ -203,23 +662,59 @@ function ExploreContent() {
         Number.isFinite(payload.x) &&
         Number.isFinite(payload.y);
 
-      if (hasPointCoords) {
-        setHoverAnchor({ x: payload.x, y: payload.y });
-      } else if (nonDeletedIndex === null) {
-        setHoverAnchor(null);
-      }
-
-      setHoveredIndex((prev) => (prev === nonDeletedIndex ? prev : nonDeletedIndex));
-      const nextCluster = nonDeletedIndex >= 0 ? clusterMap[nonDeletedIndex] : null;
-      setHoveredCluster((prev) => {
-        if ((prev?.cluster ?? null) === (nextCluster?.cluster ?? null)) {
-          return prev;
+      // When hovering a new point, cancel any pending dismiss
+      if (nonDeletedIndex !== null) {
+        if (hoverDismissTimerRef.current) {
+          clearTimeout(hoverDismissTimerRef.current);
+          hoverDismissTimerRef.current = null;
         }
-        return nextCluster;
-      });
+        if (hasPointCoords) {
+          setHoverAnchor({ x: payload.x, y: payload.y });
+        }
+        setHoveredIndex((prev) => (prev === nonDeletedIndex ? prev : nonDeletedIndex));
+        const nextCluster = nonDeletedIndex >= 0 ? clusterMap[nonDeletedIndex] : null;
+        setHoveredCluster((prev) => {
+          if ((prev?.cluster ?? null) === (nextCluster?.cluster ?? null)) {
+            return prev;
+          }
+          return nextCluster;
+        });
+      } else {
+        // Mouse left a point — delay dismissal so user can reach the hover card
+        if (hoverDismissTimerRef.current) {
+          clearTimeout(hoverDismissTimerRef.current);
+        }
+        hoverDismissTimerRef.current = setTimeout(() => {
+          hoverDismissTimerRef.current = null;
+          if (!hoverCardHoveredRef.current) {
+            clearHoverState();
+          }
+        }, 300);
+      }
     },
-    [deletedIndices, clusterMap, pinnedIndex]
+    [deletedIndices, clusterMap, pinnedIndex, clearHoverState]
   );
+
+  const handleHoverCardMouseEnter = useCallback(() => {
+    hoverCardHoveredRef.current = true;
+    if (hoverDismissTimerRef.current) {
+      clearTimeout(hoverDismissTimerRef.current);
+      hoverDismissTimerRef.current = null;
+    }
+  }, []);
+
+  const handleHoverCardMouseLeave = useCallback(() => {
+    hoverCardHoveredRef.current = false;
+    if (pinnedIndex !== null) return;
+    // Start dismiss timer when leaving the card
+    if (hoverDismissTimerRef.current) {
+      clearTimeout(hoverDismissTimerRef.current);
+    }
+    hoverDismissTimerRef.current = setTimeout(() => {
+      hoverDismissTimerRef.current = null;
+      clearHoverState();
+    }, 200);
+  }, [pinnedIndex, clearHoverState]);
 
   const handlePointSelect = useCallback(
     (indices) => {
@@ -428,9 +923,18 @@ function ExploreContent() {
   const isCollapsed = sidebarMode === SIDEBAR_MODES.COLLAPSED;
   const isExpanded = sidebarMode === SIDEBAR_MODES.EXPANDED;
   const isNormal = sidebarMode === SIDEBAR_MODES.NORMAL;
+  const isThread = sidebarMode === SIDEBAR_MODES.THREAD;
+  const isQuotes = sidebarMode === SIDEBAR_MODES.QUOTES;
   const isDesktopViewport = width >= 1024;
-  const isDesktopOverlay = isNormal && isDesktopViewport;
+  const isDesktopOverlay = (isNormal || isThread || isQuotes) && isDesktopViewport;
   const isDesktopSidebarLayout = !isExpanded && isDesktopViewport;
+
+  useEffect(() => {
+    if (isThread) return;
+    setThreadHighlightIndices(null);
+    setThreadLinksEdges([]);
+    setThreadLinksLoading(false);
+  }, [isThread]);
 
   // ====================================================================================================
   // Draggable State (only active in normal mode)
@@ -448,7 +952,7 @@ function ExploreContent() {
   const visualizationViewportWidth = Math.max(320, width - mapViewportPaddingRight);
 
   const startDragging = (e) => {
-    if (sidebarMode !== SIDEBAR_MODES.NORMAL) return;
+    if (sidebarMode === SIDEBAR_MODES.EXPANDED || sidebarMode === SIDEBAR_MODES.COLLAPSED) return;
     e.preventDefault();
     document.addEventListener('mousemove', onDrag);
     document.addEventListener('mouseup', stopDragging);
@@ -647,9 +1151,16 @@ function ExploreContent() {
             className={`visualization-pane-container ${isExpanded ? 'viz-hidden' : ''}`}
             onMouseLeave={() => {
               if (pinnedIndex === null) {
-                setHoveredIndex(null);
-                setHovered(null);
-                setHoverAnchor(null);
+                // Use dismiss timer so hover card remains reachable briefly
+                if (hoverDismissTimerRef.current) {
+                  clearTimeout(hoverDismissTimerRef.current);
+                }
+                hoverDismissTimerRef.current = setTimeout(() => {
+                  hoverDismissTimerRef.current = null;
+                  if (!hoverCardHoveredRef.current) {
+                    clearHoverState();
+                  }
+                }, 300);
               }
             }}
           >
@@ -674,6 +1185,27 @@ function ExploreContent() {
                 hoveredCluster={hoveredCluster}
                 textColumn={dataset?.text_column}
                 dataTableRows={dataTableRows}
+                linksEdges={isThread ? threadLinksEdges : linksEdges}
+                linksAvailable={linksAvailable}
+                linksMeta={linksMeta}
+                linksLoading={isThread ? threadLinksLoading : linksLoading}
+                onHoverCardMouseEnter={handleHoverCardMouseEnter}
+                onHoverCardMouseLeave={handleHoverCardMouseLeave}
+                timeRange={timeRange}
+                timestamps={timelineData.timestamps}
+                timelineDomain={timelineData.domain}
+                timelineHasDates={timelineData.hasDates}
+                timelineDatedCount={timelineData.datedCount}
+                timelineTotalCount={scopeRows?.length || 0}
+                isPlaying={isPlaying}
+                onPlayToggle={handlePlayToggle}
+                playbackSpeed={playbackSpeed}
+                onSpeedChange={setPlaybackSpeed}
+                onTimeRangeChange={handleTimeRangeChange}
+                nodeStats={nodeStats}
+                onViewThread={handleViewThread}
+                onViewQuotes={handleViewQuotes}
+                threadHighlightIndices={isThread ? threadHighlightIndices : null}
               />
             ) : null}
 
@@ -694,13 +1226,22 @@ function ExploreContent() {
             className="filter-table-container"
             style={sidebarPaneStyle}
           >
-            {/* Toggle button on the divider edge (normal mode only) */}
-            {isNormal && (
+            {/* Toggle button on the divider edge (normal/thread mode) */}
+            {(isNormal || isThread || isQuotes) && (
               <div className="sidebar-toggle-area">
                 <div
                   className="drag-handle-zone"
                   onMouseDown={startDragging}
                 />
+                {clusterHierarchy && (
+                  <button
+                    className="sidebar-toggle-button sidebar-expand-button"
+                    onClick={handleToggleExpand}
+                    title="Expand to carousel"
+                  >
+                    <GalleryHorizontalEnd size={16} />
+                  </button>
+                )}
                 <button
                   className="sidebar-toggle-button"
                   onClick={handleToggleCollapse}
@@ -708,21 +1249,12 @@ function ExploreContent() {
                 >
                   <PanelRightClose size={16} />
                 </button>
-                {clusterHierarchy && (
-                  <button
-                    className="sidebar-toggle-button sidebar-expand-button"
-                    onClick={handleToggleExpand}
-                    title="Expand to carousel"
-                  >
-                    <Columns3 size={16} />
-                  </button>
-                )}
               </div>
             )}
 
             <div className="sidebar-surface">
               {/* Normal mode: TopicTree + TweetFeed */}
-              {!isExpanded && (
+              {isNormal && (
                 <div
                   ref={filtersContainerRef}
                   className="feed-scroll-container"
@@ -739,7 +1271,7 @@ function ExploreContent() {
                       className="carousel-banner-button"
                       onClick={handleToggleExpand}
                     >
-                      <Columns3 size={18} />
+                      <GalleryHorizontalEnd size={18} />
                       <span>Browse All Topics</span>
                       <ChevronsRight size={16} className="carousel-banner-arrow" />
                     </button>
@@ -756,11 +1288,44 @@ function ExploreContent() {
                     distances={searchFilter.distances}
                     clusterMap={clusterMap}
                     sae_id={sae?.id}
-                    onHover={handleHover}
+                    onHover={undefined}
                     onClick={handleClicked}
-                    hoveredIndex={hoveredIndex}
+                    hoveredIndex={null}
+                    nodeStats={nodeStats}
+                    onViewThread={handleViewThread}
+                    onViewQuotes={handleViewQuotes}
                   />
                 </div>
+              )}
+
+              {/* Thread mode: ThreadView */}
+              {isThread && (
+                <ThreadView
+                  datasetId={dataset.id}
+                  tweetId={threadTargetTweetId}
+                  currentLsIndex={threadTargetIndex}
+                  nodeStats={nodeStats}
+                  clusterMap={clusterMap}
+                  dataset={dataset}
+                  onBack={handleCloseThread}
+                  onViewThread={handleViewThread}
+                  onViewQuotes={handleViewQuotes}
+                  onThreadDataChange={handleThreadDataChange}
+                />
+              )}
+
+              {/* Quotes mode: QuoteView */}
+              {isQuotes && (
+                <QuoteView
+                  datasetId={dataset.id}
+                  tweetId={threadTargetTweetId}
+                  nodeStats={nodeStats}
+                  clusterMap={clusterMap}
+                  dataset={dataset}
+                  onBack={handleCloseThread}
+                  onViewThread={handleViewThread}
+                  onViewQuotes={handleViewQuotes}
+                />
               )}
 
               {/* Expanded mode: FeedCarousel */}
@@ -787,6 +1352,9 @@ function ExploreContent() {
                   onHover={undefined}
                   onClick={undefined}
                   hoveredIndex={null}
+                  nodeStats={nodeStats}
+                  onViewThread={handleViewThread}
+                  onViewQuotes={handleViewQuotes}
                 />
                 </div>
               )}

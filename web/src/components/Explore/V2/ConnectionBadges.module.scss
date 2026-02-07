@@ -1,0 +1,62 @@
+.badges {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  align-items: center;
+}
+
+.compact {
+  gap: 3px;
+
+  .badge {
+    padding: 1px var(--space-1);
+    font-size: 11px;
+    gap: 3px;
+  }
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-full);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.2;
+  border: none;
+  background: none;
+  cursor: default;
+  white-space: nowrap;
+  transition: background var(--transition-fast);
+
+  svg {
+    flex-shrink: 0;
+    opacity: 0.75;
+  }
+
+  /* Thread/reply badges — warm amber tones */
+  &.thread {
+    background: color-mix(in srgb, var(--semantic-color-semantic-warning) 12%, transparent);
+    color: var(--text-color-text-warning);
+  }
+
+  /* Quote badges — cyan tones */
+  &.quote {
+    background: color-mix(in srgb, var(--semantic-color-semantic-info) 12%, transparent);
+    color: var(--text-color-text-info);
+  }
+}
+
+/* Clickable badges */
+button.badge {
+  cursor: pointer;
+
+  &.thread:hover {
+    background: color-mix(in srgb, var(--semantic-color-semantic-warning) 20%, transparent);
+  }
+
+  &.quote:hover {
+    background: color-mix(in srgb, var(--semantic-color-semantic-info) 20%, transparent);
+  }
+}

@@ -153,6 +153,19 @@ export function FilterProvider({ children }) {
             indices = await filter(column, value);
             break;
           }
+          case filterConstants.TIME_RANGE: {
+            const { start, end, timestampsByLsIndex } = filterConfig;
+            if (timestampsByLsIndex && Number.isFinite(start) && Number.isFinite(end)) {
+              indices = baseIndices.filter((lsIndex) => {
+                const ts = timestampsByLsIndex.get(lsIndex);
+                if (ts === undefined || Number.isNaN(ts)) return true; // Keep dateless rows (likes)
+                return ts >= start && ts <= end;
+              });
+            } else {
+              indices = baseIndices;
+            }
+            break;
+          }
           default: {
             indices = baseIndices;
           }
@@ -233,48 +246,34 @@ export function FilterProvider({ children }) {
   }, [shownIndices, deletedIndices, userId, datasetId, scope, filterConfig, page]);
 
   // The context exposes only the state and setters that consumer components need.
-  const value = {
-    // Filter configuration state.
+  const value = useMemo(() => ({
     filterConfig,
     setFilterConfig,
     filterQuery,
     setFilterQuery,
-
-    // Filtered indices and pagination state.
-    filteredIndices, // Complete set of indices after filtering.
-    shownIndices, // Paginated indices for table views.
+    filteredIndices,
+    shownIndices,
     page,
     setPage,
     totalPages,
     ROWS_PER_PAGE,
-
     loading,
     setLoading,
     filterActive,
     setFilterActive,
-
     searchFilter,
-    // distances
-    // searchText (shouldn't need this)
-
     clusterFilter,
-    // cluster
-
     featureFilter,
-    // feature
-    // setFeature (needed by the Feature modal)
-    // threshold
-
     columnFilter,
-    // columnToValue
-    // columnFilters
-    // columnIndices
-
     setUrlParams,
-
-    // Data Table Rows
     dataTableRows,
-  };
+  }), [
+    filterConfig, setFilterConfig, filterQuery, setFilterQuery,
+    filteredIndices, shownIndices, page, setPage, totalPages, ROWS_PER_PAGE,
+    loading, setLoading, filterActive, setFilterActive,
+    searchFilter, clusterFilter, featureFilter, columnFilter,
+    setUrlParams, dataTableRows,
+  ]);
 
   return <FilterContext.Provider value={value}>{children}</FilterContext.Provider>;
 }

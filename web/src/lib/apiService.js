@@ -268,6 +268,62 @@ export const apiService = {
   fetchSettings: async () => {
     return fetch(`${apiUrl}/settings`).then((response) => response.json());
   },
+  fetchLinksMeta: async (datasetId) => {
+    return fetch(`${apiUrl}/datasets/${datasetId}/links/meta`).then((response) => {
+      if (!response.ok) {
+        const err = new Error(`Failed to fetch links meta (${response.status})`);
+        err.status = response.status;
+        throw err;
+      }
+      return response.json();
+    });
+  },
+  fetchLinksByIndices: async (datasetId, payload) => {
+    return fetch(`${apiUrl}/datasets/${datasetId}/links/by-indices`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload || {}),
+    }).then((response) => {
+      if (!response.ok) {
+        const err = new Error(`Failed to fetch links by indices (${response.status})`);
+        err.status = response.status;
+        throw err;
+      }
+      return response.json();
+    });
+  },
+  fetchNodeStats: async (datasetId) => {
+    return fetch(`${apiUrl}/datasets/${datasetId}/links/node-stats`).then((response) => {
+      if (!response.ok) {
+        const err = new Error(`Failed to fetch node stats (${response.status})`);
+        err.status = response.status;
+        throw err;
+      }
+      return response.json();
+    });
+  },
+  fetchThread: async (datasetId, tweetId) => {
+    return fetch(`${apiUrl}/datasets/${datasetId}/links/thread/${encodeURIComponent(tweetId)}`).then((response) => {
+      if (!response.ok) {
+        const err = new Error(`Failed to fetch thread (${response.status})`);
+        err.status = response.status;
+        throw err;
+      }
+      return response.json();
+    });
+  },
+  fetchQuotes: async (datasetId, tweetId) => {
+    return fetch(`${apiUrl}/datasets/${datasetId}/links/quotes/${encodeURIComponent(tweetId)}`).then((response) => {
+      if (!response.ok) {
+        const err = new Error(`Failed to fetch quotes (${response.status})`);
+        err.status = response.status;
+        throw err;
+      }
+      return response.json();
+    });
+  },
   fetchExportList: async (datasetId) => {
     return fetch(`${apiUrl}/datasets/${datasetId}/export/list`).then((response) => response.json());
   },
@@ -316,7 +372,7 @@ export const apiService = {
       response.json()
     );
   },
-  getHoverText: async (scope, index) => {
+  getHoverRecord: async (scope, index, columns = null) => {
     return fetch(`${apiUrl}/query`, {
       method: 'POST',
       headers: {
@@ -326,11 +382,18 @@ export const apiService = {
         dataset: scope.dataset.id,
         indices: [index],
         page: 0,
+        ...(Array.isArray(columns) && columns.length ? { columns } : {}),
       }),
     })
       .then((response) => response.json())
       .then((data) => {
-        return data.rows[0][scope.dataset.text_column];
+        return data?.rows?.[0] || null;
+      });
+  },
+  getHoverText: async (scope, index) => {
+    return apiService.getHoverRecord(scope, index, [scope.dataset.text_column]).then((row) => {
+      if (!row) return '';
+      return row[scope.dataset.text_column] || '';
       });
   },
   columnFilter: async (datasetId, filters) => {
