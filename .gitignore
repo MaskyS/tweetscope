@@ -6,6 +6,7 @@ testenv
 testenv-whl
 testenv-prod
 .env
+env
 dist
 build
 *.egg-info

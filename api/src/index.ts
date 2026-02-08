@@ -17,6 +17,59 @@ import { dataRoutes } from "./routes/data.js";
 
 const app = new Hono();
 
+type AppMode = "studio" | "hosted" | "single_profile";
+
+function parseBool(raw: string | undefined): boolean {
+  if (!raw) return false;
+  return ["1", "true", "t", "yes", "y", "on"].includes(raw.trim().toLowerCase());
+}
+
+function parseOrigins(raw: string | undefined): string | string[] {
+  if (!raw || !raw.trim()) return "http://localhost:5173";
+  if (raw.trim() === "*") return "*";
+  const origins = raw
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+  return origins.length <= 1 ? origins[0] ?? "http://localhost:5173" : origins;
+}
+
+const rawMode = (
+  process.env.LATENT_SCOPE_APP_MODE ??
+  process.env.APP_MODE ??
+  "single_profile"
+)
+  .trim()
+  .toLowerCase();
+const appMode: AppMode =
+  rawMode === "studio" || rawMode === "hosted" || rawMode === "single_profile"
+    ? rawMode
+    : "single_profile";
+const readOnly = parseBool(process.env.LATENT_SCOPE_READ_ONLY ?? process.env.READ_ONLY) || appMode === "single_profile";
+const publicDataset =
+  process.env.PUBLIC_DATASET ??
+  process.env.LATENT_SCOPE_PUBLIC_DATASET ??
+  (appMode === "single_profile" ? "visakanv" : null);
+const publicScope =
+  process.env.PUBLIC_SCOPE ??
+  process.env.LATENT_SCOPE_PUBLIC_SCOPE ??
+  (appMode === "single_profile" ? "scopes-001" : null);
+const maxUploadMb = Number.parseInt(
+  process.env.LATENT_SCOPE_MAX_UPLOAD_MB ?? "1024",
+  10
+);
+const features = {
+  can_explore: true,
+  can_compare: appMode === "studio",
+  can_ingest: (appMode === "studio" || appMode === "hosted") && !readOnly,
+  can_setup: appMode === "studio" && !readOnly,
+  can_jobs: appMode === "studio" && !readOnly,
+  can_export: appMode === "studio" && !readOnly,
+  can_settings: appMode === "studio" && !readOnly,
+  twitter_import: (appMode === "hosted" || appMode === "studio") && !readOnly,
+  generic_file_ingest: appMode === "studio" && !readOnly,
+};
+
 // --- Middleware ---
 
 app.use("*", logger());
@@ -24,7 +77,7 @@ app.use("*", logger());
 app.use(
   "/api/*",
   cors({
-    origin: process.env.CORS_ORIGIN ?? "http://localhost:5173",
+    origin: parseOrigins(process.env.CORS_ORIGIN),
     allowMethods: ["GET", "POST", "OPTIONS"],
     allowHeaders: ["Content-Type", "Authorization"],
   })
@@ -42,26 +95,12 @@ app.get("/api/health", (c) => c.json({ status: "ok" }));
 // App config — keys must match web/src/App.jsx:64-66
 app.get("/api/app-config", (c) =>
   c.json({
-    mode: "single_profile",
-    read_only: true,
-    public_dataset_id:
-      process.env.PUBLIC_DATASET ??
-      process.env.LATENT_SCOPE_PUBLIC_DATASET ??
-      "visakanv",
-    public_scope_id:
-      process.env.PUBLIC_SCOPE ??
-      process.env.LATENT_SCOPE_PUBLIC_SCOPE ??
-      "scopes-001",
-    features: {
-      can_explore: true,
-      can_compare: false,
-      can_ingest: false,
-      can_setup: false,
-      can_jobs: false,
-      can_export: false,
-      can_settings: false,
-    },
-    limits: { max_upload_mb: 0 },
+    mode: appMode,
+    read_only: readOnly,
+    public_dataset_id: publicDataset,
+    public_scope_id: publicScope,
+    features,
+    limits: { max_upload_mb: Number.isFinite(maxUploadMb) ? maxUploadMb : 1024 },
     version: "ts-api-0.1.0",
   })
 );
