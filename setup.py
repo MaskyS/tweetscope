@@ -90,7 +90,6 @@ setup(
             'ls-cluster=latentscope.scripts.cluster:main',
             'ls-label=latentscope.scripts.label_clusters:main',
             'ls-scope=latentscope.scripts.scope:main',
-            'ls-export-plot=latentscope.scripts.export_plot:main',
             'ls-update-embedding-stats=latentscope.scripts.embed:update_embedding_stats',
             'ls-sae=latentscope.scripts.sae:main',
             'ls-download-dataset=latentscope.scripts.download_dataset:main',
