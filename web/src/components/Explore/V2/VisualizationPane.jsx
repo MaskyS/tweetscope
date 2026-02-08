@@ -1,9 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef, forwardRef, useImperativeHandle } from 'react';
 import { groups } from 'd3-array';
 import PropTypes from 'prop-types';
-// import Scatter from '../Scatter';
-// import Scatter from '../ScatterCanvas';
-// import Scatter from './ScatterGL';
 import Scatter, { getClusterColorCSS, getClusterColorRGBA } from './DeckGLScatter';
 import AnnotationPlot from '../../AnnotationPlot';
 import HullPlot from '../../HullPlot';
