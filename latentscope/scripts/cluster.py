@@ -18,17 +18,7 @@ except ImportError as e:
 
 from latentscope.util import get_data_dir
 
-# TODO move this into shared space
-def calculate_point_size(num_points, min_size=10, max_size=30, base_num_points=100):
-    import numpy as np
-    """
-    Calculate the size of points for a scatter plot based on the number of points.
-    """
-    # TODO fix this to actually calculate a log scale between min and max size
-    if num_points <= base_num_points:
-        return max_size
-    else:
-        return min(min_size + min_size * np.log(num_points / base_num_points), max_size)
+from latentscope.util import calculate_point_size
 
 
 def main():
