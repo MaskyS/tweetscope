@@ -255,6 +255,37 @@ def _flatten_like(
     }
 
 
+def _collect_deduped_community_likes(payload: dict[str, Any]) -> list[Any]:
+    """
+    Collect community-archive likes supporting both key variants:
+    - `like` (raw archive payload)
+    - `likes` (some extracted variants)
+    """
+    likes: list[Any] = []
+    seen_like_keys: set[str] = set()
+    for key in ("like", "likes"):
+        value = payload.get(key, [])
+        if not isinstance(value, list):
+            continue
+        for like_obj in value:
+            like_core = like_obj.get("like", like_obj) if isinstance(like_obj, dict) else like_obj
+            if isinstance(like_core, dict):
+                dedupe_key = str(
+                    like_core.get("tweetId")
+                    or like_core.get("tweet_id")
+                    or like_core.get("id_str")
+                    or like_core.get("id")
+                    or json.dumps(like_core, sort_keys=True, ensure_ascii=False)
+                )
+            else:
+                dedupe_key = json.dumps(like_core, sort_keys=True, ensure_ascii=False)
+            if dedupe_key in seen_like_keys:
+                continue
+            seen_like_keys.add(dedupe_key)
+            likes.append(like_obj)
+    return likes
+
+
 def load_native_x_archive_zip(zip_path: str) -> ImportResult:
     """Load and normalize a native X export archive zip."""
     with zipfile.ZipFile(zip_path, "r") as zf:
@@ -353,7 +384,8 @@ def load_community_archive_raw(raw_data: dict[str, Any], username: str) -> Impor
                 source="community_archive",
             )
         )
-    for like_obj in raw_data.get("likes", []):
+
+    for like_obj in _collect_deduped_community_likes(raw_data):
         row = _flatten_like(
             like_obj,
             username=profile.get("username"),
@@ -388,7 +420,7 @@ def load_community_extracted_json(path: str) -> ImportResult:
                 source="community_archive",
             )
         )
-    for like_obj in payload.get("likes", []):
+    for like_obj in _collect_deduped_community_likes(payload):
         row = _flatten_like(
             like_obj,
             username=username,
