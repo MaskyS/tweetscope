@@ -221,25 +221,27 @@ export function FilterProvider({ children }) {
         }
       }
 
-      apiService.fetchDataFromIndices(datasetId, nonDeletedIndices, scope?.sae_id).then((rows) => {
-        // Only update state if this is the latest request.
-        if (lastRequestRef.current !== requestTimestamp) {
-          // Discard stale result.
-          return;
-        }
-        const rowsWithIdx = rows.map((row, idx) => ({
-          ...row,
-          idx,
-          ls_index: row.index,
-        }));
-        setDataTableRows(rowsWithIdx);
+      apiService
+        .fetchDataFromIndices(datasetId, nonDeletedIndices, scope?.sae_id, scope?.id)
+        .then((rows) => {
+          // Only update state if this is the latest request.
+          if (lastRequestRef.current !== requestTimestamp) {
+            // Discard stale result.
+            return;
+          }
+          const rowsWithIdx = rows.map((row, idx) => ({
+            ...row,
+            idx,
+            ls_index: row.index,
+          }));
+          setDataTableRows(rowsWithIdx);
 
-        // only cache the result if there is no filter config
-        // i.e. we are showing the default set of rows
-        if (!filterConfig) {
-          rowsCache.current.set(cacheKey, rowsWithIdx);
-        }
-      });
+          // only cache the result if there is no filter config
+          // i.e. we are showing the default set of rows
+          if (!filterConfig) {
+            rowsCache.current.set(cacheKey, rowsWithIdx);
+          }
+        });
     } else {
       setDataTableRows([]);
     }

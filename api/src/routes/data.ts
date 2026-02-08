@@ -16,7 +16,7 @@ import {
   parquetReadObjects,
 } from "hyparquet";
 import { createReadStream } from "node:fs";
-import { readFile, stat } from "node:fs/promises";
+import { readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { getIndexColumn, getTable, getTableColumns } from "../lib/lancedb.js";
 
@@ -56,7 +56,7 @@ const RAW_DATA_URL = process.env.DATA_URL?.replace(/\/$/, "");
 const PUBLIC_DATASET =
   process.env.PUBLIC_DATASET ?? process.env.LATENT_SCOPE_PUBLIC_DATASET ?? null;
 const PUBLIC_SCOPE =
-  process.env.PUBLIC_SCOPE ?? process.env.LATENT_SCOPE_PUBLIC_SCOPE ?? "scopes-001";
+  process.env.PUBLIC_SCOPE ?? process.env.LATENT_SCOPE_PUBLIC_SCOPE ?? null;
 const DATA_DIR = process.env.LATENT_SCOPE_DATA
   ? expandHome(process.env.LATENT_SCOPE_DATA)
   : null;
@@ -268,7 +268,7 @@ function passthrough(res: Response): Response {
   });
 }
 
-function resolveScopeId(payload: JsonRecord): string {
+function resolveScopeId(payload: JsonRecord): string | null {
   const candidate = payload.scope_id;
   if (typeof candidate === "string" && candidate.trim()) return candidate;
   return PUBLIC_SCOPE;
@@ -282,6 +282,54 @@ async function getScopeMeta(dataset: string, scopeId: string): Promise<JsonRecor
   const scope = await loadJsonFile(`${dataset}/scopes/${scopeId}.json`);
   scopeCache.set(cacheKey, scope);
   return scope;
+}
+
+async function listJsonObjects(
+  relativeDirectory: string,
+  filenamePattern: RegExp
+): Promise<JsonRecord[]> {
+  if (!DATA_DIR) return [];
+  const absoluteDirectory = path.join(DATA_DIR, ensureSafeRelativePath(relativeDirectory));
+  const entries = await readdir(absoluteDirectory, { withFileTypes: true });
+  const jsonEntries = entries
+    .filter((entry) => entry.isFile() && filenamePattern.test(entry.name))
+    .map((entry) => entry.name)
+    .sort((a, b) => a.localeCompare(b));
+
+  const out: JsonRecord[] = [];
+  for (const fileName of jsonEntries) {
+    const json = await loadJsonFile(`${relativeDirectory}/${fileName}`);
+    out.push(json);
+  }
+  return out;
+}
+
+async function listDatasetsFromDataDir(): Promise<JsonRecord[]> {
+  if (!DATA_DIR) return [];
+  let entries;
+  try {
+    entries = await readdir(DATA_DIR, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  const datasets: JsonRecord[] = [];
+
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const metaPath = path.join(DATA_DIR, entry.name, "meta.json");
+    if (!(await fileExists(metaPath))) continue;
+    try {
+      const text = await readFile(metaPath, "utf-8");
+      const meta = JSON.parse(text) as JsonRecord;
+      meta.id = entry.name;
+      datasets.push(meta);
+    } catch {
+      // Ignore malformed metadata files.
+    }
+  }
+
+  datasets.sort((a, b) => String(a.id ?? "").localeCompare(String(b.id ?? "")));
+  return datasets;
 }
 
 function ensureIndexInSelection(columns: string[], indexColumn: string): string[] {
@@ -449,8 +497,13 @@ dataRoutes.get("/datasets/:dataset/meta", async (c) => {
 dataRoutes.get("/datasets/:dataset/scopes", async (c) => {
   const dataset = c.req.param("dataset");
   try {
-    const scope = await getScopeMeta(dataset, PUBLIC_SCOPE);
-    return c.json([scope]);
+    if (PUBLIC_SCOPE) {
+      const scope = await getScopeMeta(dataset, PUBLIC_SCOPE);
+      return c.json([scope]);
+    }
+    if (!DATA_DIR) throw new Error("No local scope listing available");
+    const scopes = await listJsonObjects(`${dataset}/scopes`, /.*[0-9]+\.json$/);
+    return c.json(scopes);
   } catch {
     if (isApiDataUrl()) {
       const res = await proxyDataApi("GET", `/datasets/${dataset}/scopes`);
@@ -531,9 +584,14 @@ dataRoutes.get("/datasets/:dataset/scopes/:scope/parquet", async (c) => {
 dataRoutes.get("/datasets/:dataset/embeddings", async (c) => {
   const dataset = c.req.param("dataset");
   try {
-    const scopeMeta = await getScopeMeta(dataset, PUBLIC_SCOPE);
-    const embedding = scopeMeta.embedding as JsonRecord | undefined;
-    if (embedding) return c.json([embedding]);
+    if (PUBLIC_SCOPE) {
+      const scopeMeta = await getScopeMeta(dataset, PUBLIC_SCOPE);
+      const embedding = scopeMeta.embedding as JsonRecord | undefined;
+      if (embedding) return c.json([embedding]);
+    }
+    if (!DATA_DIR) throw new Error("No local embedding listing available");
+    const embeddings = await listJsonObjects(`${dataset}/embeddings`, /.*\.json$/);
+    return c.json(embeddings);
   } catch {
     // Fallback below.
   }
@@ -551,9 +609,14 @@ dataRoutes.get("/datasets/:dataset/embeddings", async (c) => {
 dataRoutes.get("/datasets/:dataset/clusters", async (c) => {
   const dataset = c.req.param("dataset");
   try {
-    const scopeMeta = await getScopeMeta(dataset, PUBLIC_SCOPE);
-    const cluster = scopeMeta.cluster as JsonRecord | undefined;
-    return c.json(cluster ? [cluster] : []);
+    if (PUBLIC_SCOPE) {
+      const scopeMeta = await getScopeMeta(dataset, PUBLIC_SCOPE);
+      const cluster = scopeMeta.cluster as JsonRecord | undefined;
+      if (cluster) return c.json([cluster]);
+    }
+    if (!DATA_DIR) throw new Error("No local cluster listing available");
+    const clusters = await listJsonObjects(`${dataset}/clusters`, /^cluster-\d+\.json$/);
+    return c.json(clusters);
   } catch {
     if (isApiDataUrl()) {
       const res = await proxyDataApi("GET", `/datasets/${dataset}/clusters`);
@@ -564,15 +627,23 @@ dataRoutes.get("/datasets/:dataset/clusters", async (c) => {
 });
 
 dataRoutes.get("/datasets/:dataset/clusters/:cluster/labels_available", async (c) => {
-  const dataset = c.req.param("dataset");
+  const { dataset, cluster } = c.req.param();
   try {
-    const scopeMeta = await getScopeMeta(dataset, PUBLIC_SCOPE);
-    const labels = scopeMeta.cluster_labels as JsonRecord | undefined;
-    return c.json(labels ? [labels] : []);
+    if (PUBLIC_SCOPE) {
+      const scopeMeta = await getScopeMeta(dataset, PUBLIC_SCOPE);
+      const labels = scopeMeta.cluster_labels as JsonRecord | undefined;
+      if (labels) return c.json([labels]);
+    }
+    if (!DATA_DIR) throw new Error("No local labels listing available");
+    const escapedCluster = cluster.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const labels = await listJsonObjects(
+      `${dataset}/clusters`,
+      new RegExp(`^${escapedCluster}-labels-.*\\.json$`)
+    );
+    return c.json(labels);
   } catch {
     if (isApiDataUrl()) {
-      const { dataset: ds, cluster } = c.req.param();
-      const res = await proxyDataApi("GET", `/datasets/${ds}/clusters/${cluster}/labels_available`);
+      const res = await proxyDataApi("GET", `/datasets/${dataset}/clusters/${cluster}/labels_available`);
       return passthrough(res);
     }
     return c.json([]);
@@ -865,6 +936,12 @@ dataRoutes.post("/indexed", async (c) => {
   if (requested.length === 0) return c.json([]);
 
   const scopeId = resolveScopeId(payload);
+  if (!scopeId) {
+    return c.json(
+      { error: "scope_id is required when LATENT_SCOPE_PUBLIC_SCOPE is not configured" },
+      400
+    );
+  }
   const table = await getTable(scopeId);
   const indexColumn = await getIndexColumn(scopeId);
   const tableColumns = await getTableColumns(scopeId);
@@ -908,6 +985,12 @@ dataRoutes.post("/indexed", async (c) => {
 dataRoutes.post("/query", async (c) => {
   const payload = (await c.req.json().catch(() => ({}))) as JsonRecord;
   const scopeId = resolveScopeId(payload);
+  if (!scopeId) {
+    return c.json(
+      { error: "scope_id is required when LATENT_SCOPE_PUBLIC_SCOPE is not configured" },
+      400
+    );
+  }
   const table = await getTable(scopeId);
   const indexColumn = await getIndexColumn(scopeId);
   const tableColumns = await getTableColumns(scopeId);
@@ -993,6 +1076,12 @@ dataRoutes.post("/query", async (c) => {
 dataRoutes.post("/column-filter", async (c) => {
   const payload = (await c.req.json().catch(() => ({}))) as JsonRecord;
   const scopeId = resolveScopeId(payload);
+  if (!scopeId) {
+    return c.json(
+      { error: "scope_id is required when LATENT_SCOPE_PUBLIC_SCOPE is not configured" },
+      400
+    );
+  }
   const table = await getTable(scopeId);
   const indexColumn = await getIndexColumn(scopeId);
   const where = buildFilterWhere(payload.filters);
@@ -1046,6 +1135,13 @@ dataRoutes.get("/datasets", async () => {
   if (isApiDataUrl()) {
     const res = await proxyDataApi("GET", "/datasets");
     return passthrough(res);
+  }
+  const localDatasets = await listDatasetsFromDataDir();
+  if (localDatasets.length > 0) {
+    return new Response(JSON.stringify(localDatasets), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
   }
   if (PUBLIC_DATASET) {
     return new Response(JSON.stringify([{ id: PUBLIC_DATASET }]), {

@@ -201,13 +201,18 @@ export const apiService = {
       response.json()
     );
   },
-  fetchDataFromIndices: async (datasetId, indices, saeId) => {
+  fetchDataFromIndices: async (datasetId, indices, saeId, scopeId = null) => {
     return fetch(`${apiUrl}/indexed`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ dataset: datasetId, indices: indices, sae_id: saeId }),
+      body: JSON.stringify({
+        dataset: datasetId,
+        indices: indices,
+        sae_id: saeId,
+        ...(scopeId ? { scope_id: scopeId } : {}),
+      }),
     })
       .then((response) => response.json())
       .then((data) => {
@@ -380,6 +385,7 @@ export const apiService = {
       },
       body: JSON.stringify({
         dataset: scope.dataset.id,
+        scope_id: scope.id,
         indices: [index],
         page: 0,
         ...(Array.isArray(columns) && columns.length ? { columns } : {}),
@@ -394,15 +400,19 @@ export const apiService = {
     return apiService.getHoverRecord(scope, index, [scope.dataset.text_column]).then((row) => {
       if (!row) return '';
       return row[scope.dataset.text_column] || '';
-      });
+    });
   },
-  columnFilter: async (datasetId, filters) => {
+  columnFilter: async (datasetId, filters, scopeId = null) => {
     return fetch(`${apiUrl}/column-filter`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ dataset: datasetId, filters: filters }),
+      body: JSON.stringify({
+        dataset: datasetId,
+        filters: filters,
+        ...(scopeId ? { scope_id: scopeId } : {}),
+      }),
     }).then((response) => response.json());
   },
   resolveUrl: async (url) => {

@@ -1,6 +1,7 @@
 import { AnimatePresence, motion } from 'framer-motion';
 import { X } from 'lucide-react';
 import ThreadView from '../ThreadView/ThreadView';
+import { useScope } from '@/contexts/ScopeContext';
 import styles from './ThreadOverlay.module.scss';
 
 export default function ThreadOverlay({
@@ -14,6 +15,8 @@ export default function ThreadOverlay({
   onViewThread,
   onViewQuotes,
 }) {
+  const { scope } = useScope();
+
   return (
     <AnimatePresence>
       {open && tweetId && (
@@ -40,6 +43,7 @@ export default function ThreadOverlay({
             <div className={styles.content}>
               <ThreadView
                 datasetId={dataset?.id}
+                scopeId={scope?.id}
                 tweetId={tweetId}
                 currentLsIndex={currentLsIndex}
                 nodeStats={nodeStats}

@@ -10,6 +10,7 @@ import styles from './ThreadView.module.scss';
  */
 export default function QuoteView({
   datasetId,
+  scopeId,
   tweetId,
   nodeStats,
   clusterMap,
@@ -50,7 +51,12 @@ export default function QuoteView({
 
         let rowMap = new Map();
         if (allIndices.size > 0) {
-          const rows = await apiService.fetchDataFromIndices(datasetId, Array.from(allIndices));
+          const rows = await apiService.fetchDataFromIndices(
+            datasetId,
+            Array.from(allIndices),
+            null,
+            scopeId
+          );
           if (cancelled || requestId !== requestIdRef.current) return;
           for (const row of rows) {
             rowMap.set(row.index, row);
@@ -83,7 +89,7 @@ export default function QuoteView({
     })();
 
     return () => { cancelled = true; };
-  }, [datasetId, tweetId]);
+  }, [datasetId, scopeId, tweetId]);
 
   const totalCount = incoming.length + outgoing.length;
 

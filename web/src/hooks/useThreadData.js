@@ -12,7 +12,7 @@ import { apiService } from '../lib/apiService';
  * - internalIndices: Set of ls_index values for all internal thread members
  * - loading, error, tweetCount
  */
-export default function useThreadData(datasetId, tweetId, currentLsIndex, enabled = false) {
+export default function useThreadData(datasetId, scopeId, tweetId, currentLsIndex, enabled = false) {
   const [parentChain, setParentChain] = useState([]);
   const [currentTweet, setCurrentTweet] = useState(null);
   const [descendants, setDescendants] = useState([]);
@@ -63,7 +63,7 @@ export default function useThreadData(datasetId, tweetId, currentLsIndex, enable
         let rowMap = new Map();
         if (allInternalIndices.size > 0) {
           const indices = Array.from(allInternalIndices);
-          const rows = await apiService.fetchDataFromIndices(datasetId, indices);
+          const rows = await apiService.fetchDataFromIndices(datasetId, indices, null, scopeId);
           if (cancelled || requestId !== requestIdRef.current) return;
           for (const row of rows) {
             rowMap.set(row.index, row);
@@ -134,7 +134,7 @@ export default function useThreadData(datasetId, tweetId, currentLsIndex, enable
     })();
 
     return () => { cancelled = true; };
-  }, [datasetId, tweetId, currentLsIndex, enabled]);
+  }, [datasetId, scopeId, tweetId, currentLsIndex, enabled]);
 
   return { parentChain, currentTweet, descendants, edges, internalIndices, loading, error, tweetCount };
 }

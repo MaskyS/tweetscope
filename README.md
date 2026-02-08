@@ -77,6 +77,8 @@ LATENT_SCOPE_JOB_TIMEOUT_SEC=1800
 
 In hosted mode, the native X archive form supports a browser-side privacy mode that extracts/minimizes tweet JSON locally before upload.
 
+For Vercel deployment of demo + hosted variants from one GitHub repo, see `documentation/vercel-deployment.md`.
+
 ### Python interface
 
 You can also ingest data from a Pandas dataframe using the Python interface:

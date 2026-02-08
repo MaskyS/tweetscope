@@ -10,6 +10,7 @@ import styles from './ThreadView.module.scss';
  */
 export default function ThreadView({
   datasetId,
+  scopeId,
   tweetId,
   currentLsIndex,
   nodeStats,
@@ -30,7 +31,7 @@ export default function ThreadView({
     loading,
     error,
     tweetCount,
-  } = useThreadData(datasetId, tweetId, currentLsIndex, !!tweetId);
+  } = useThreadData(datasetId, scopeId, tweetId, currentLsIndex, !!tweetId);
 
   const scrollRef = useRef(null);
   const currentRef = useRef(null);

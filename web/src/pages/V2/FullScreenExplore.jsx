@@ -1302,6 +1302,7 @@ function ExploreContent() {
               {isThread && (
                 <ThreadView
                   datasetId={dataset.id}
+                  scopeId={scope?.id}
                   tweetId={threadTargetTweetId}
                   currentLsIndex={threadTargetIndex}
                   nodeStats={nodeStats}
@@ -1318,6 +1319,7 @@ function ExploreContent() {
               {isQuotes && (
                 <QuoteView
                   datasetId={dataset.id}
+                  scopeId={scope?.id}
                   tweetId={threadTargetTweetId}
                   nodeStats={nodeStats}
                   clusterMap={clusterMap}

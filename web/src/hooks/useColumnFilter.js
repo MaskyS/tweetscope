@@ -27,7 +27,7 @@ const useColumnFilter = (userId, datasetId, scope) => {
         value: value,
       },
     ];
-    const res = await apiService.columnFilter(datasetId, query);
+    const res = await apiService.columnFilter(datasetId, query, scope?.id);
     console.log('column filter res', res);
     return res.indices;
   };
