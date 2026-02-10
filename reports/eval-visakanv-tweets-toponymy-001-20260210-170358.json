@@ -1,0 +1,53 @@
+{
+  "timestamp": "2026-02-10T17:03:58.796174",
+  "dataset_id": "visakanv-tweets",
+  "scope_id": "scopes-002",
+  "cluster_labels_id": "toponymy-001",
+  "structure": {
+    "num_layers": 2,
+    "clusters_per_layer": {
+      "0": 12,
+      "1": 4
+    },
+    "total_clusters": 16,
+    "invalid_parent_refs": 5,
+    "orphan_nodes": 0,
+    "wrong_layer_parents": 0,
+    "parent_issues": [
+      "0_0: parent 2_0 does not exist",
+      "0_1: parent 2_0 does not exist",
+      "0_4: parent 2_0 does not exist",
+      "0_5: parent 2_0 does not exist",
+      "0_8: parent 2_0 does not exist"
+    ],
+    "total_rows": 500,
+    "layer0_assigned": 283,
+    "unknown_count_metadata": 0,
+    "unknown_count_actual": 0,
+    "coverage_gap": 217,
+    "unknown_count_mismatch": false,
+    "duplicate_assignments": 0
+  },
+  "labels": {
+    "duplicates_per_layer": {
+      "0": {
+        "total_clusters": 12,
+        "duplicate_labels": {},
+        "duplicate_rate": 0.0
+      },
+      "1": {
+        "total_clusters": 4,
+        "duplicate_labels": {},
+        "duplicate_rate": 0.0
+      }
+    },
+    "generic_labels": 0,
+    "meaningful_labels": 16,
+    "label_quality": "toponymy",
+    "label_length_min": 16,
+    "label_length_max": 119,
+    "label_length_mean": 80.9
+  },
+  "health_score": 70,
+  "issues_count": 2
+}
