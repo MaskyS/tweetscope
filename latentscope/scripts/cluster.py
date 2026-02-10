@@ -29,12 +29,14 @@ def main():
     parser.add_argument('min_samples', type=int, help='Minimum samples for HDBSCAN')
     parser.add_argument('cluster_selection_epsilon', type=float, help='Cluster selection Epsilon', default=0)
     parser.add_argument('column', type=str, nargs='?', help='Use column as cluster labels', default=None)
-    
+    parser.add_argument('--clustering_umap_id', type=str, default=None,
+                        help='UMAP id for clustering manifold (kD). If not given, clusters on display UMAP x,y.')
+
     args = parser.parse_args()
-    clusterer(args.dataset_id, args.umap_id, args.samples, args.min_samples, args.cluster_selection_epsilon, args.column)
+    clusterer(args.dataset_id, args.umap_id, args.samples, args.min_samples, args.cluster_selection_epsilon, args.column, clustering_umap_id=args.clustering_umap_id)
 
 
-def clusterer(dataset_id, umap_id, samples, min_samples, cluster_selection_epsilon, column):
+def clusterer(dataset_id, umap_id, samples, min_samples, cluster_selection_epsilon, column, clustering_umap_id=None):
     DATA_DIR = get_data_dir()
     cluster_dir = os.path.join(DATA_DIR, dataset_id, "clusters")
     # Check if clusters directory exists, if not, create it
@@ -61,9 +63,23 @@ def clusterer(dataset_id, umap_id, samples, min_samples, cluster_selection_epsil
     from scipy.spatial import ConvexHull
     from scipy.spatial.distance import cdist
 
+    # Load display UMAP (always needed for viz/hulls/centroids)
     umap_embeddings_df = pd.read_parquet(os.path.join(DATA_DIR, dataset_id, "umaps", f"{umap_id}.parquet"))
     # Extract x,y columns into numpy array with shape (n,2)
     umap_embeddings = np.column_stack((umap_embeddings_df['x'], umap_embeddings_df['y']))
+
+    # Load clustering manifold if provided (kD), otherwise cluster on display 2D
+    if clustering_umap_id is not None:
+        clustering_df = pd.read_parquet(os.path.join(DATA_DIR, dataset_id, "umaps", f"{clustering_umap_id}.parquet"))
+        dim_cols = [c for c in clustering_df.columns if c.startswith("dim_")]
+        if dim_cols:
+            clustering_vectors = clustering_df[dim_cols].values
+            print(f"Clustering on {len(dim_cols)}D manifold from {clustering_umap_id}")
+        else:
+            print(f"WARNING: {clustering_umap_id} has no dim_* columns, falling back to display x,y")
+            clustering_vectors = umap_embeddings
+    else:
+        clustering_vectors = umap_embeddings
 
     if column is not None:
         input_df = pd.read_parquet(os.path.join(DATA_DIR, dataset_id, f"input.parquet"))
@@ -71,7 +87,7 @@ def clusterer(dataset_id, umap_id, samples, min_samples, cluster_selection_epsil
         cluster_labels = input_df[column].to_numpy()
     else:
         clusterer = hdbscan.HDBSCAN(min_cluster_size=samples, min_samples=min_samples, metric='euclidean', cluster_selection_epsilon=cluster_selection_epsilon)
-        clusterer.fit(umap_embeddings)
+        clusterer.fit(clustering_vectors)
         # Get the cluster labels
         cluster_labels = clusterer.labels_
     # copy cluster labels to another array
@@ -80,14 +96,15 @@ def clusterer(dataset_id, umap_id, samples, min_samples, cluster_selection_epsil
     # Determine points with no assigned cluster
     unique_labels = np.unique(cluster_labels)
     non_noise_labels = unique_labels[unique_labels != -1]
-    centroids = [umap_embeddings[cluster_labels == label].mean(axis=0) for label in non_noise_labels]
+    # Compute centroids in clustering space for noise reassignment
+    cluster_centroids = [clustering_vectors[cluster_labels == label].mean(axis=0) for label in non_noise_labels]
 
     # TODO: look into soft clustering
     # https://hdbscan.readthedocs.io/en/latest/soft_clustering.html
-    # Assign noise points to the closest cluster centroid
-    noise_points = umap_embeddings[cluster_labels == -1]
+    # Assign noise points to the closest cluster centroid (in clustering space)
+    noise_points = clustering_vectors[cluster_labels == -1]
     if(non_noise_labels.shape[0] > 0):
-      closest_centroid_indices = np.argmin(cdist(noise_points, centroids), axis=1)
+      closest_centroid_indices = np.argmin(cdist(noise_points, cluster_centroids), axis=1)
 
       # Update cluster_labels with the new assignments for noise points
       noise_indices = np.where(cluster_labels == -1)[0]
@@ -126,17 +143,19 @@ def clusterer(dataset_id, umap_id, samples, min_samples, cluster_selection_epsil
     plt.gca().set_position([0, 0, 1, 1])  # remove margins
     plt.savefig(os.path.join(cluster_dir, f"{cluster_id}.png"))
 
-    with open(os.path.join(cluster_dir,f"{cluster_id}.json"), 'w') as f:
-        json.dump({
-            "id": cluster_id,
-            "umap_id": umap_id, 
-            "samples": samples, 
-            "min_samples": min_samples,
-            "cluster_selection_epsilon": cluster_selection_epsilon,
-            "n_clusters": len(non_noise_labels),
-            "n_noise": len(noise_points)
-        }, f, indent=2)
-    f.close()
+    cluster_meta = {
+        "id": cluster_id,
+        "umap_id": umap_id,
+        "samples": samples,
+        "min_samples": min_samples,
+        "cluster_selection_epsilon": cluster_selection_epsilon,
+        "n_clusters": len(non_noise_labels),
+        "n_noise": len(noise_points),
+    }
+    if clustering_umap_id is not None:
+        cluster_meta["clustering_umap_id"] = clustering_umap_id
+    with open(os.path.join(cluster_dir, f"{cluster_id}.json"), 'w') as f:
+        json.dump(cluster_meta, f, indent=2)
 
     # create the data structure for labeling clusters
     # get the indices of each item in a cluster

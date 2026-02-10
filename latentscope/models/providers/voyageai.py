@@ -5,13 +5,14 @@ from .base import EmbedModelProvider
 
 class VoyageAIEmbedProvider(EmbedModelProvider):
     def load_model(self):
-        import voyageai 
+        import voyageai
         from tokenizers import Tokenizer
         from latentscope.util import get_key
         api_key = get_key("VOYAGE_API_KEY")
         if api_key is None:
-            print("ERROR: No API key found for Voyage")
-            print("Missing 'VOYAGE_API_KEY' variable in:", f"{os.getcwd()}/.env")
+            raise ValueError(
+                f"VOYAGE_API_KEY not found. Set it in {os.getcwd()}/.env or as an environment variable."
+            )
         self.client = voyageai.Client(api_key)
         # The voyage client provides a tokenizer that only encodes https://docs.voyageai.com/tokenization/
         # It also says that it uses the same tokenizer as Llama 2

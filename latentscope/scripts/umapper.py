@@ -19,6 +19,10 @@ def main():
     parser.add_argument('--save', action='store_true', help='Save the UMAP model')
     parser.add_argument('--seed', type=int, help='Random seed', default=None)
     parser.add_argument('--sae_id', type=str, help='SAE to project instead of embedding', default=None)
+    parser.add_argument('--purpose', type=str, choices=['display', 'cluster'], default='display',
+                        help='Purpose of UMAP: display (2D viz) or cluster (kD for clustering)')
+    parser.add_argument('--n_components', type=int, default=None,
+                        help='Number of UMAP dimensions (default: 2 for display, 10 for cluster)')
 
     # Parse arguments
     args = parser.parse_args()
@@ -27,10 +31,15 @@ def main():
     if seed == -1:
         seed = None
 
+    purpose = args.purpose
+    n_components = args.n_components
+    if n_components is None:
+        n_components = 2 if purpose == 'display' else 10
+
     if args.sae_id:
         sparse_umapper(args.dataset_id, args.embedding_id, args.sae_id, args.neighbors, args.min_dist, save=args.save, init=args.init, seed=seed)
     else:
-        umapper(args.dataset_id, args.embedding_id, args.neighbors, args.min_dist, save=args.save, init=args.init, align=args.align, seed=seed)
+        umapper(args.dataset_id, args.embedding_id, args.neighbors, args.min_dist, save=args.save, init=args.init, align=args.align, seed=seed, purpose=purpose, n_components=n_components)
 
 
 from latentscope.util import calculate_point_size
@@ -66,7 +75,7 @@ def load_embeddings(dataset_id, embedding_id):
             embeddings = np.array(dataset)
             return embeddings
 
-def umapper(dataset_id, embedding_id, neighbors=25, min_dist=0.1, save=False, init=None, align=None, seed=None):
+def umapper(dataset_id, embedding_id, neighbors=25, min_dist=0.1, save=False, init=None, align=None, seed=None, purpose='display', n_components=2):
     DATA_DIR = get_data_dir()
     # read in the embeddings 
 
@@ -106,15 +115,18 @@ def umapper(dataset_id, embedding_id, neighbors=25, min_dist=0.1, save=False, in
         min_values = np.min(umap_embeddings, axis=0)
         max_values = np.max(umap_embeddings, axis=0)
 
-        # Scale the embeddings to the range [0, 1]
-        umap_embeddings = (umap_embeddings - min_values) / (max_values - min_values)
+        if purpose == 'cluster':
+            # For clustering manifold: save raw kD vectors without normalization
+            print("writing raw clustering manifold", umap_id, f"({n_components}D)")
+            columns = [f"dim_{i}" for i in range(umap_embeddings.shape[1])]
+            df = pd.DataFrame(umap_embeddings, columns=columns)
+        else:
+            # For display: normalize to [-1, 1] range
+            umap_embeddings = (umap_embeddings - min_values) / (max_values - min_values)
+            umap_embeddings = 2 * umap_embeddings - 1
 
-        # Scale the embeddings to the range [-1, 1]
-        umap_embeddings = 2 * umap_embeddings - 1
-
-        print("writing normalized umap", umap_id)
-        # save umap embeddings to a parquet file with columns x,y
-        df = pd.DataFrame(umap_embeddings, columns=['x', 'y'])
+            print("writing normalized umap", umap_id)
+            df = pd.DataFrame(umap_embeddings, columns=['x', 'y'])
 
         # TODO I moved this to scope.py it's cheap and it makes it backwards compatible
         # Calculate tile indices for a 64x64 grid from -1 to 1
@@ -141,22 +153,26 @@ def umapper(dataset_id, embedding_id, neighbors=25, min_dist=0.1, save=False, in
         df.to_parquet(output_file)
         print("wrote", output_file)
 
-        # generate a scatterplot of the umap embeddings and save it to a file
-        fig, ax = plt.subplots(figsize=(14.22, 14.22))  # 1024px by 1024px at 72 dpi
-        point_size = calculate_point_size(umap_embeddings.shape[0])
-        print("POINT SIZE", point_size, "for", umap_embeddings.shape[0], "points")
-        plt.scatter(umap_embeddings[:, 0], umap_embeddings[:, 1], s=point_size, alpha=0.5)
-        plt.axis('off')  # remove axis
-        plt.gca().set_position([0, 0, 1, 1])  # remove margins
-        plt.savefig(os.path.join(umap_dir, f"{umap_id}.png"))
+        # Only generate PNG for display manifolds (2D)
+        if purpose == 'display':
+            fig, ax = plt.subplots(figsize=(14.22, 14.22))  # 1024px by 1024px at 72 dpi
+            point_size = calculate_point_size(umap_embeddings.shape[0])
+            print("POINT SIZE", point_size, "for", umap_embeddings.shape[0], "points")
+            plt.scatter(umap_embeddings[:, 0], umap_embeddings[:, 1], s=point_size, alpha=0.5)
+            plt.axis('off')  # remove axis
+            plt.gca().set_position([0, 0, 1, 1])  # remove margins
+            plt.savefig(os.path.join(umap_dir, f"{umap_id}.png"))
 
         # save a json file with the umap parameters
         with open(os.path.join(umap_dir, f'{umap_id}.json'), 'w') as f:
             meta = {
-                "id": umap_id, 
+                "id": umap_id,
                 "embedding_id": emb_id,
-                "neighbors": neighbors, 
+                "neighbors": neighbors,
                 "min_dist": min_dist,
+                "n_components": n_components,
+                "purpose": purpose,
+                "metric": "cosine",
                 "min_values": min_values.tolist(),
                 "max_values": max_values.tolist(),
             }
@@ -194,7 +210,7 @@ def umapper(dataset_id, embedding_id, neighbors=25, min_dist=0.1, save=False, in
             min_dist=min_dist,
             metric='cosine',
             random_state=seed,
-            n_components=2,
+            n_components=n_components,
             verbose=True,
         )
         print("a_embeddings", len(a_embeddings), a_embeddings[0].shape[0])
@@ -220,7 +236,7 @@ def umapper(dataset_id, embedding_id, neighbors=25, min_dist=0.1, save=False, in
             min_dist=min_dist,
             metric='cosine',
             random_state=seed,
-            n_components=2,
+            n_components=n_components,
             verbose=True,
         )
     else:
@@ -229,10 +245,10 @@ def umapper(dataset_id, embedding_id, neighbors=25, min_dist=0.1, save=False, in
             min_dist=min_dist,
             metric='cosine',
             random_state=seed,
-            n_components=2,
+            n_components=n_components,
             verbose=True,
         )
-    print("reducing", embeddings.shape[1], "embeddings to 2 dimensions")
+    print(f"reducing {embeddings.shape[1]} embeddings to {n_components} dimensions ({purpose})")
 
     import sys
     sys.stdout.flush()

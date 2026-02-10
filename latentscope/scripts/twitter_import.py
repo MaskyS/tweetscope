@@ -353,29 +353,16 @@ def _try_enable_hierarchical_scope(
             "toponymy_generated": False,
         }
 
-    generated_labels_id = None
-    toponymy_error = None
-    try:
-        from latentscope.scripts.toponymy_labels import run_toponymy_labeling
-
-        generated_labels_id = run_toponymy_labeling(
-            dataset_id=dataset_id,
-            scope_id=scope_id,
-            llm_provider=toponymy_provider,
-            llm_model=toponymy_model,
-            min_clusters=toponymy_min_clusters,
-            base_min_cluster_size=toponymy_base_min_cluster_size,
-            context=toponymy_context,
-        )
-    except Exception as err:
-        toponymy_error = str(err)
-        generated_labels_id = _build_hierarchical_fallback_labels(
-            dataset_id=dataset_id,
-            dataset_dir=dataset_dir,
-            cluster_id=cluster_id,
-            umap_id=umap_id,
-            min_clusters=toponymy_min_clusters,
-        )
+    from latentscope.scripts.toponymy_labels import run_toponymy_labeling
+    generated_labels_id = run_toponymy_labeling(
+        dataset_id=dataset_id,
+        scope_id=scope_id,
+        llm_provider=toponymy_provider,
+        llm_model=toponymy_model,
+        min_clusters=toponymy_min_clusters,
+        base_min_cluster_size=toponymy_base_min_cluster_size,
+        context=toponymy_context,
+    )
 
     scope(
         dataset_id=dataset_id,
@@ -391,9 +378,7 @@ def _try_enable_hierarchical_scope(
     return {
         "cluster_labels_id": generated_labels_id,
         "hierarchical_labels": True,
-        "toponymy_generated": toponymy_error is None,
-        "hierarchical_fallback_used": toponymy_error is not None,
-        "toponymy_error": toponymy_error,
+        "toponymy_generated": True,
     }
 
 
@@ -415,7 +400,7 @@ def run_import(
     sort: str = "recent",
     text_column: str = "text",
     run_pipeline: bool = False,
-    embedding_model: str = "transformers-intfloat___e5-small-v2",
+    embedding_model: str = "voyageai-voyage-4-lite",
     umap_neighbors: int = 25,
     umap_min_dist: float = 0.1,
     cluster_samples: int = 5,
@@ -501,7 +486,7 @@ def run_import(
     dataset_dir = os.path.join(data_dir, dataset_id)
     embedding_id = _latest_id(os.path.join(dataset_dir, "embeddings"), r"embedding-\d+\.json")
 
-    # 2) UMAP
+    # 2a) Display UMAP (2D for visualization)
     umapper(
         dataset_id=dataset_id,
         embedding_id=embedding_id,
@@ -511,10 +496,27 @@ def run_import(
         init=None,
         align=None,
         seed=None,
+        purpose='display',
+        n_components=2,
     )
     umap_id = _latest_id(os.path.join(dataset_dir, "umaps"), r"umap-\d+\.json")
 
-    # 3) Clustering
+    # 2b) Clustering UMAP (kD for HDBSCAN)
+    umapper(
+        dataset_id=dataset_id,
+        embedding_id=embedding_id,
+        neighbors=umap_neighbors,
+        min_dist=0.0,  # tighter manifold for clustering
+        save=False,
+        init=None,
+        align=None,
+        seed=None,
+        purpose='cluster',
+        n_components=10,
+    )
+    clustering_umap_id = _latest_id(os.path.join(dataset_dir, "umaps"), r"umap-\d+\.json")
+
+    # 3) Clustering (on kD manifold)
     clusterer(
         dataset_id=dataset_id,
         umap_id=umap_id,
@@ -522,6 +524,7 @@ def run_import(
         min_samples=cluster_min_samples,
         cluster_selection_epsilon=cluster_selection_epsilon,
         column=None,
+        clustering_umap_id=clustering_umap_id,
     )
     cluster_id = _latest_id(os.path.join(dataset_dir, "clusters"), r"cluster-\d+\.json")
 
@@ -544,32 +547,25 @@ def run_import(
     cluster_labels_id = "default"
     hierarchical_enabled = False
     if hierarchical_labels:
-        try:
-            hier = _try_enable_hierarchical_scope(
-                dataset_id=dataset_id,
-                dataset_dir=dataset_dir,
-                scope_id=scope_id,
-                embedding_id=embedding_id,
-                umap_id=umap_id,
-                cluster_id=cluster_id,
-                label=scope_label,
-                description=scope_description,
-                toponymy_provider=toponymy_provider,
-                toponymy_model=toponymy_model,
-                toponymy_min_clusters=toponymy_min_clusters,
-                toponymy_base_min_cluster_size=toponymy_base_min_cluster_size,
-                toponymy_context=toponymy_context,
-            )
-            cluster_labels_id = hier.get("cluster_labels_id", "default")
-            hierarchical_enabled = bool(hier.get("hierarchical_labels"))
-            if "toponymy_generated" in hier:
-                summary["toponymy_generated"] = bool(hier["toponymy_generated"])
-            if "hierarchical_fallback_used" in hier:
-                summary["hierarchical_fallback_used"] = bool(hier["hierarchical_fallback_used"])
-            if hier.get("toponymy_error"):
-                summary["toponymy_error"] = hier["toponymy_error"]
-        except Exception as err:
-            summary["toponymy_error"] = str(err)
+        hier = _try_enable_hierarchical_scope(
+            dataset_id=dataset_id,
+            dataset_dir=dataset_dir,
+            scope_id=scope_id,
+            embedding_id=embedding_id,
+            umap_id=umap_id,
+            cluster_id=cluster_id,
+            label=scope_label,
+            description=scope_description,
+            toponymy_provider=toponymy_provider,
+            toponymy_model=toponymy_model,
+            toponymy_min_clusters=toponymy_min_clusters,
+            toponymy_base_min_cluster_size=toponymy_base_min_cluster_size,
+            toponymy_context=toponymy_context,
+        )
+        cluster_labels_id = hier.get("cluster_labels_id", "default")
+        hierarchical_enabled = bool(hier.get("hierarchical_labels"))
+        if "toponymy_generated" in hier:
+            summary["toponymy_generated"] = bool(hier["toponymy_generated"])
 
     summary.update(
         {
@@ -634,7 +630,7 @@ def main() -> None:
     parser.add_argument(
         "--embedding_model",
         type=str,
-        default="transformers-intfloat___e5-small-v2",
+        default="voyageai-voyage-4-lite",
         help="Embedding model id for --run_pipeline",
     )
     parser.add_argument("--umap_neighbors", type=int, default=25)

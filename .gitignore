@@ -11,3 +11,5 @@ dist
 build
 *.egg-info
 *.un~
+.vercel
+.env*.local

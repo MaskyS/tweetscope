@@ -51,7 +51,7 @@ def main():
     parser = argparse.ArgumentParser(description='Embed a dataset')
     parser.add_argument('dataset_id', type=str, help='Dataset id (directory name in data/)')
     parser.add_argument('text_column', type=str, help='Output file', default='text')
-    parser.add_argument('model_id', type=str, help='ID of embedding model to use', default="transformers-BAAI___bge-small-en-v1.5")
+    parser.add_argument('model_id', type=str, help='ID of embedding model to use', default="voyageai-voyage-4-lite")
     parser.add_argument('--prefix', type=str, help='Prefix to prepend to text before embedding', default="")
     parser.add_argument('--dimensions', type=int, help='Truncate embeddings to dimensions a la Matroyshka embeddings')
     parser.add_argument('--rerun', type=str, help='Rerun the given embedding from last completed batch')
@@ -129,7 +129,7 @@ def embed(dataset_id, text_column, model_id, prefix, rerun, dimensions, batch_si
             print(f"skipping batch {i}/{total_batches}", flush=True)
             continue
         try:
-            embeddings = np.array(model.embed(batch, dimensions=dimensions))
+            embeddings = np.array(model.embed(batch, dimensions=dimensions), dtype=np.float32)
             append_to_hdf5(os.path.join(embedding_dir, f"{embedding_id}.h5"), embeddings)
         except Exception as e:
             print(batch)
@@ -226,7 +226,7 @@ def embed_truncate(dataset_id, embedding_id, dimensions):
    
 
     print("truncating to", dimensions, "dimensions")
-    matroyshka = embeddings[:, :dimensions]
+    matroyshka = embeddings[:, :dimensions].astype(np.float32)
     # Normalize the truncated embeddings
     matroyshka = matroyshka / np.linalg.norm(matroyshka, axis=1, keepdims=True)
     append_to_hdf5(os.path.join(embedding_dir, f"{new_embedding_id}.h5"), matroyshka)
@@ -340,6 +340,7 @@ def importer():
         embeddings = np.array(list(embeddings))
     if embeddings.ndim == 1:
         embeddings = np.stack(embeddings)
+    embeddings = embeddings.astype(np.float32)
     
 
     import_embeddings(args.dataset_id, embeddings, args.model_id, args.text_column)

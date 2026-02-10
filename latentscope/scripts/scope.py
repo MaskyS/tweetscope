@@ -7,6 +7,23 @@ from latentscope.util import get_data_dir
 from latentscope import __version__
 
 
+# Canonical columns for the serving parquet (-input.parquet).
+# Columns not present in input.parquet are silently skipped.
+SERVING_COLUMNS = [
+    # Identity
+    "id", "ls_index",
+    # Plot
+    "x", "y", "cluster", "raw_cluster", "label", "deleted", "tile_index_64", "tile_index_128",
+    # Core row
+    "text", "created_at", "username", "display_name", "tweet_type",
+    # Engagement / filter
+    "favorites", "retweets", "replies", "is_reply", "is_retweet", "is_like",
+    # Media / link support
+    "urls_json", "media_urls_json",
+    # Provenance
+    "archive_source",
+]
+
 def main():
     parser = argparse.ArgumentParser(description='Setup a scope')
     parser.add_argument('dataset_id', type=str, help='Dataset id (directory name in data folder)')
@@ -24,7 +41,7 @@ def main():
 
 
 
-def export_lance(directory, dataset, scope_id, metric="cosine", partitions=256):
+def export_lance(directory, dataset, scope_id, metric="cosine", partitions=None):
     import lancedb
     import pandas as pd
     import h5py
@@ -80,8 +97,11 @@ def export_lance(directory, dataset, scope_id, metric="cosine", partitions=256):
 
     print(f"Creating ANN index for embeddings on table '{table_name}'")
     dim = embeddings['embeddings'].shape[1]
+    n_rows = len(scope_df)
+    if partitions is None:
+        partitions = max(1, int(n_rows ** 0.5))
     sub_vectors = dim // 16
-    print(f"Partitioning into {partitions} partitions, {sub_vectors} sub-vectors")
+    print(f"Partitioning into {partitions} partitions ({n_rows} rows), {sub_vectors} sub-vectors")
     tbl.create_index(num_partitions=partitions, num_sub_vectors=sub_vectors, metric=metric)
 
     print(f"Creating index for cluster on table '{table_name}'")
@@ -182,8 +202,31 @@ def scope(dataset_id, embedding_id, umap_id, cluster_id, cluster_labels_id, labe
     if is_hierarchical:
         # Hierarchical labels from Toponymy
         # Keep: cluster, layer, label, description, hull, count, parent_cluster, children, centroid_x, centroid_y
-        # Drop: indices (too large for JSON)
-        cluster_labels_df = cluster_labels_df.drop(columns=[col for col in ["indices"] if col in cluster_labels_df.columns])
+        # Drop: indices (too large for JSON) after computing unknown count.
+        full_hierarchical_labels_df = cluster_labels_df.copy()
+
+        # Count how many rows are NOT assigned to any layer-0 cluster
+        # so the unknown cluster has an accurate count.
+        assigned_indices = set()
+        if "indices" in full_hierarchical_labels_df.columns:
+            layer0_labels = full_hierarchical_labels_df[full_hierarchical_labels_df["layer"] == 0]
+            for indices in layer0_labels["indices"]:
+                if indices is None:
+                    continue
+                if hasattr(indices, "tolist"):
+                    indices = indices.tolist()
+                assigned_indices.update(indices)
+
+        # Total rows from the cluster parquet (read below at line ~272)
+        # We use umap row count as proxy since it matches input length.
+        umap_row_count = len(
+            pd.read_parquet(os.path.join(DATA_DIR, dataset_id, "umaps", umap_id + ".parquet"))
+        )
+        unknown_count = max(0, umap_row_count - len(assigned_indices))
+
+        cluster_labels_df = full_hierarchical_labels_df.drop(
+            columns=[col for col in ["indices"] if col in full_hierarchical_labels_df.columns]
+        )
 
         # Convert hull to list if it's a numpy array
         if "hull" in cluster_labels_df.columns:
@@ -198,6 +241,7 @@ def scope(dataset_id, embedding_id, umap_id, cluster_id, cluster_labels_id, labe
             )
 
         cluster_labels_list = cluster_labels_df.to_dict(orient="records")
+
         # Add an "unknown" cluster for unclustered points
         cluster_labels_list.append({
             "cluster": "unknown",
@@ -205,7 +249,7 @@ def scope(dataset_id, embedding_id, umap_id, cluster_id, cluster_labels_id, labe
             "label": "Unclustered",
             "description": "Points not assigned to any cluster",
             "hull": [],
-            "count": 0,
+            "count": unknown_count,
             "parent_cluster": None,
             "children": [],
             "centroid_x": 0,
@@ -213,6 +257,7 @@ def scope(dataset_id, embedding_id, umap_id, cluster_id, cluster_labels_id, labe
         })
         scope["cluster_labels_lookup"] = cluster_labels_list
         scope["hierarchical_labels"] = True
+        scope["unknown_count"] = unknown_count
     else:
         # Standard (flat) cluster labels
         cluster_labels_df = cluster_labels_df.drop(columns=[col for col in ["indices", "labeled", "label_raw"] if col in cluster_labels_df.columns])
@@ -304,20 +349,20 @@ def scope(dataset_id, embedding_id, umap_id, cluster_id, cluster_labels_id, labe
     with open(file_path, 'w') as f:
         json.dump(scope, f, indent=2)
     
-    transactions_file_path = os.path.join(directory, id + "-transactions.json")
-    if not os.path.exists(transactions_file_path):
-        with open(transactions_file_path, 'w') as f:
-            json.dump([], f)
-    
     print("creating combined scope-input parquet")
     input_df = pd.read_parquet(os.path.join(DATA_DIR, dataset_id, "input.parquet"))
+    # Ensure id is always string (prevents JS precision loss for large tweet IDs)
+    if "id" in input_df.columns:
+        input_df["id"] = input_df["id"].astype(str)
     input_df.reset_index(inplace=True)
     input_df = input_df[input_df['index'].isin(scope_parquet['ls_index'])]
     combined_df = input_df.join(scope_parquet.set_index('ls_index'), on='index', rsuffix='_ls')
+    # Select only canonical serving columns (skip any not present in this dataset)
+    available = [c for c in SERVING_COLUMNS if c in combined_df.columns]
+    combined_df = combined_df[available]
     combined_df.to_parquet(os.path.join(directory, id + "-input.parquet"))
 
     print("exporting to lancedb")
     export_lance(DATA_DIR, dataset_id, id)
 
     print("wrote scope", id)
-
