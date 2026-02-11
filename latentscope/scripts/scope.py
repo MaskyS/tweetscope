@@ -41,35 +41,75 @@ def load_contract(contract_path=None):
     with open(path) as f:
         return json.load(f)
 
-_TYPE_NORMALIZERS = {
-    "string":      lambda s: s.fillna("").astype(str),
-    "int":         lambda s: pd.to_numeric(s, errors="coerce").fillna(0).astype(np.int64),
-    "float":       lambda s: pd.to_numeric(s, errors="coerce").astype(np.float32),
-    "bool":        lambda s: (
-        s.map(
-            lambda v: (
-                v
-                if isinstance(v, (bool, np.bool_))
-                else (
-                    str(v).strip().lower() in {"1", "true", "t", "yes", "y"}
-                    if isinstance(v, str)
-                    else bool(v)
-                )
+def _coerce_bool(s):
+    return s.map(
+        lambda v: (
+            v
+            if isinstance(v, (bool, np.bool_))
+            else (
+                str(v).strip().lower() in {"1", "true", "t", "yes", "y"}
+                if isinstance(v, str)
+                else bool(v)
             )
-        ).fillna(False).astype(bool)
-    ),
-    "json_string": lambda s: s.fillna("[]").astype(str),
+        )
+    )
+
+# Type casters that do NOT fill nulls — fillna is handled by normalize_serving_types
+# based on nullable/default semantics from the contract.
+_TYPE_CASTERS = {
+    "string":      lambda s: s.astype(str).where(s.notna(), other=None),
+    "int":         lambda s: pd.to_numeric(s, errors="coerce"),
+    "float":       lambda s: pd.to_numeric(s, errors="coerce").astype(np.float32),
+    "bool":        _coerce_bool,
+    "json_string": lambda s: s.astype(str).where(s.notna(), other=None),
+}
+
+# Defaults for non-nullable columns (must not contain nulls after normalization)
+_NON_NULLABLE_DEFAULTS = {
+    "string": "",
+    "int": 0,
+    "float": 0.0,
+    "bool": False,
+    "json_string": "[]",
 }
 
 def normalize_serving_types(df, contract):
-    """Cast each column in *df* to its contract-declared type (in-place)."""
+    """Cast each column in *df* to its contract-declared type (in-place).
+
+    Respects nullable/default semantics from the contract:
+    - nullable=false: fillna with type default (empty string, 0, False, "[]")
+    - nullable=true + default specified: fillna with contract default
+    - nullable=true + no default: preserve nulls
+    """
     all_columns = {**contract["required_columns"], **contract.get("optional_columns", {})}
     for col, spec in all_columns.items():
         if col not in df.columns:
             continue
-        normalizer = _TYPE_NORMALIZERS.get(spec["type"])
-        if normalizer:
-            df[col] = normalizer(df[col])
+        col_type = spec["type"]
+        nullable = spec.get("nullable", False)
+        default = spec.get("default")
+
+        # Step 1: cast to correct type (preserves nulls)
+        caster = _TYPE_CASTERS.get(col_type)
+        if caster:
+            df[col] = caster(df[col])
+
+        # Step 2: fill nulls based on nullable/default semantics
+        if not nullable:
+            fill_value = _NON_NULLABLE_DEFAULTS.get(col_type, "")
+            df[col] = df[col].fillna(fill_value)
+        elif default is not None:
+            df[col] = df[col].fillna(default)
+        # else: nullable=true, no default → preserve nulls
+
+        # Step 3: final dtype enforcement for non-nullable columns
+        if not nullable:
+            if col_type == "int":
+                df[col] = df[col].astype(np.int64)
+            elif col_type == "bool":
+                df[col] = df[col].astype(bool)
+            elif col_type in ("string", "json_string"):
+                df[col] = df[col].astype(str)
     return df
 
 def validate_scope_input_df(df, contract):
@@ -92,20 +132,32 @@ def validate_scope_input_df(df, contract):
     if dupes:
         errors.append(f"Duplicate column names: {dupes}")
 
-    # Type checks on present columns
+    # Type and nullability checks on present columns
     all_columns = {**required, **contract.get("optional_columns", {})}
     for col, spec in all_columns.items():
         if col not in df.columns:
             continue
         t = spec["type"]
+        nullable = spec.get("nullable", False)
+
+        # Type check
         if t == "string" and not pd.api.types.is_string_dtype(df[col]):
             errors.append(f"Column '{col}' expected string, got {df[col].dtype}")
         elif t == "int" and not pd.api.types.is_integer_dtype(df[col]):
-            errors.append(f"Column '{col}' expected int, got {df[col].dtype}")
+            # Nullable int columns may be float64 (pandas stores nullable ints as float)
+            if not (nullable and pd.api.types.is_float_dtype(df[col])):
+                errors.append(f"Column '{col}' expected int, got {df[col].dtype}")
         elif t == "float" and not pd.api.types.is_float_dtype(df[col]):
             errors.append(f"Column '{col}' expected float, got {df[col].dtype}")
         elif t == "bool" and not pd.api.types.is_bool_dtype(df[col]):
-            errors.append(f"Column '{col}' expected bool, got {df[col].dtype}")
+            # Nullable bool columns may be object dtype
+            if not (nullable and df[col].dtype == object):
+                errors.append(f"Column '{col}' expected bool, got {df[col].dtype}")
+
+        # Nullability check: non-nullable columns must not contain nulls
+        if not nullable and df[col].isna().any():
+            null_count = df[col].isna().sum()
+            errors.append(f"Column '{col}' is non-nullable but has {null_count} null values")
 
     if errors:
         raise ValueError(

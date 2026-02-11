@@ -616,13 +616,12 @@ dataRoutes.get("/datasets/:dataset/scopes/:scope", async (c) => {
 
 dataRoutes.get("/datasets/:dataset/scopes/:scope/parquet", async (c) => {
   const { dataset, scope } = c.req.param();
-  // Derive columns from contract + engagement extras
-  const contractRequired = Object.keys(scopeContract.required_columns);
-  const optionalColumns = Object.keys(scopeContract.optional_columns ?? {});
-  const selected = [...new Set([...contractRequired, ...optionalColumns, "index"])];
 
   try {
-    const rows = await loadParquetRows(`${dataset}/scopes/${scope}-input.parquet`, selected);
+    // Read all columns from -input.parquet (already curated to SERVING_COLUMNS by scope.py).
+    // Don't pass a column filter — requesting columns the file lacks causes hyparquet to throw
+    // before our validateRequiredColumns check can run.
+    const rows = await loadParquetRows(`${dataset}/scopes/${scope}-input.parquet`);
 
     const normalized = rows.map((row, idx) => {
       const lsIndex = normalizeIndex(row.ls_index ?? row.index) ?? idx;
