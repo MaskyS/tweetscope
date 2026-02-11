@@ -51,8 +51,13 @@ def _find_matching_toponymy_labels_id(
     *,
     embedding_id: str,
     umap_id: str,
+    cluster_id: str,
+    llm_provider: str,
+    llm_model: str,
+    min_clusters: int,
+    base_min_cluster_size: int,
 ) -> str | None:
-    """Find latest Toponymy labels generated for this embedding+umap pair."""
+    """Find latest Toponymy labels generated for the exact pipeline lineage."""
     clusters_dir = os.path.join(dataset_dir, "clusters")
     if not os.path.isdir(clusters_dir):
         return None
@@ -70,6 +75,16 @@ def _find_matching_toponymy_labels_id(
         if meta.get("embedding_id") != embedding_id:
             continue
         if meta.get("umap_id") != umap_id:
+            continue
+        if meta.get("cluster_id") != cluster_id:
+            continue
+        if meta.get("llm_provider") != llm_provider:
+            continue
+        if meta.get("llm_model") != llm_model:
+            continue
+        if int(meta.get("min_clusters", -1)) != int(min_clusters):
+            continue
+        if int(meta.get("base_min_cluster_size", -1)) != int(base_min_cluster_size):
             continue
 
         label_id = meta.get("id")
@@ -334,6 +349,11 @@ def _try_enable_hierarchical_scope(
         dataset_dir,
         embedding_id=embedding_id,
         umap_id=umap_id,
+        cluster_id=cluster_id,
+        llm_provider=toponymy_provider,
+        llm_model=toponymy_model,
+        min_clusters=toponymy_min_clusters,
+        base_min_cluster_size=toponymy_base_min_cluster_size,
     )
     if existing_labels_id:
         scope(

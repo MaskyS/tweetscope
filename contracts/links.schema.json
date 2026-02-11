@@ -1,0 +1,28 @@
+{
+  "version": "links-v1",
+  "edges": {
+    "required_columns": {
+      "edge_type":       { "type": "string", "nullable": false },
+      "src_tweet_id":    { "type": "string", "nullable": false },
+      "dst_tweet_id":    { "type": "string", "nullable": false },
+      "src_ls_index":    { "type": "int",    "nullable": false },
+      "dst_ls_index":    { "type": "int",    "nullable": true },
+      "internal_target": { "type": "bool",   "nullable": false },
+      "source_url":      { "type": "string", "nullable": true }
+    }
+  },
+  "node_stats": {
+    "required_columns": {
+      "tweet_id":          { "type": "string", "nullable": true },
+      "ls_index":          { "type": "int",    "nullable": true },
+      "thread_root_id":    { "type": "string", "nullable": true },
+      "thread_depth":      { "type": "int",    "nullable": true },
+      "thread_size":       { "type": "int",    "nullable": true },
+      "reply_child_count": { "type": "int",    "nullable": true },
+      "reply_in_count":    { "type": "int",    "nullable": true },
+      "reply_out_count":   { "type": "int",    "nullable": true },
+      "quote_in_count":    { "type": "int",    "nullable": true },
+      "quote_out_count":   { "type": "int",    "nullable": true }
+    }
+  }
+}

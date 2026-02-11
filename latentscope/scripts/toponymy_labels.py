@@ -237,6 +237,10 @@ def run_toponymy_labeling(
         hierarchical_labels,
         topic_model,
         scope_meta,
+        llm_provider=llm_provider,
+        llm_model=llm_model,
+        min_clusters=min_clusters,
+        base_min_cluster_size=base_min_cluster_size,
         audit_info=audit_info
     )
 
@@ -471,7 +475,18 @@ def generate_output_id(dataset_path):
     return f"toponymy-{next_num:03d}"
 
 
-def save_hierarchical_labels(dataset_path, output_id, hierarchical_labels, topic_model, scope_meta, audit_info=None):
+def save_hierarchical_labels(
+    dataset_path,
+    output_id,
+    hierarchical_labels,
+    topic_model,
+    scope_meta,
+    llm_provider=None,
+    llm_model=None,
+    min_clusters=None,
+    base_min_cluster_size=None,
+    audit_info=None,
+):
     """Save hierarchical labels to parquet and JSON files."""
     clusters_dir = os.path.join(dataset_path, "clusters")
 
@@ -491,6 +506,11 @@ def save_hierarchical_labels(dataset_path, output_id, hierarchical_labels, topic
         "scope_id": scope_meta["id"],
         "embedding_id": scope_meta["embedding_id"],
         "umap_id": scope_meta["umap_id"],
+        "cluster_id": scope_meta.get("cluster_id"),
+        "llm_provider": llm_provider,
+        "llm_model": llm_model,
+        "min_clusters": min_clusters,
+        "base_min_cluster_size": base_min_cluster_size,
         "num_layers": len(topic_model.topic_names_),
         "num_clusters": len(hierarchical_labels),
         "layer_counts": [len(names) for names in topic_model.topic_names_],

@@ -1,0 +1,31 @@
+{
+  "version": "scope-input-v1",
+  "required_columns": {
+    "id":        { "type": "string",  "nullable": false },
+    "ls_index":  { "type": "int",     "nullable": false },
+    "x":         { "type": "float",   "nullable": false },
+    "y":         { "type": "float",   "nullable": false },
+    "cluster":   { "type": "string",  "nullable": false },
+    "label":     { "type": "string",  "nullable": false },
+    "deleted":   { "type": "bool",    "nullable": false },
+    "text":      { "type": "string",  "nullable": false }
+  },
+  "optional_columns": {
+    "raw_cluster":     { "type": "string",      "nullable": true },
+    "tile_index_64":   { "type": "int",         "nullable": true },
+    "tile_index_128":  { "type": "int",         "nullable": true },
+    "created_at":      { "type": "string",      "nullable": true },
+    "username":        { "type": "string",      "nullable": true },
+    "display_name":    { "type": "string",      "nullable": true },
+    "tweet_type":      { "type": "string",      "nullable": true },
+    "favorites":       { "type": "int",         "nullable": true },
+    "retweets":        { "type": "int",         "nullable": true },
+    "replies":         { "type": "int",         "nullable": true },
+    "is_reply":        { "type": "bool",        "nullable": true },
+    "is_retweet":      { "type": "bool",        "nullable": true },
+    "is_like":         { "type": "bool",        "nullable": true },
+    "urls_json":       { "type": "json_string", "nullable": true, "default": "[]" },
+    "media_urls_json": { "type": "json_string", "nullable": true, "default": "[]" },
+    "archive_source":  { "type": "string",      "nullable": true }
+  }
+}

@@ -4,6 +4,7 @@ import re
 import sys
 import json
 import time
+import math
 import argparse
 from datetime import datetime
 
@@ -45,6 +46,34 @@ def get_last_batch(file_path):
             return dataset.shape[0]
     except FileNotFoundError:
         return 0
+
+
+def get_hdf5_embedding_stats(file_path):
+    """Compute shape/min/max across the full embeddings dataset (chunked)."""
+    import h5py
+    import numpy as np
+
+    with h5py.File(file_path, "r") as f:
+        ds = f["embeddings"]
+        n_rows, n_dims = ds.shape
+        if n_rows == 0:
+            raise ValueError(f"Embeddings dataset is empty in {file_path}")
+
+        chunk_rows = max(1, min(8192, n_rows))
+        min_values = None
+        max_values = None
+        for start in range(0, n_rows, chunk_rows):
+            chunk = np.asarray(ds[start:start + chunk_rows], dtype=np.float32)
+            chunk_min = np.min(chunk, axis=0)
+            chunk_max = np.max(chunk, axis=0)
+            if min_values is None:
+                min_values = chunk_min
+                max_values = chunk_max
+            else:
+                min_values = np.minimum(min_values, chunk_min)
+                max_values = np.maximum(max_values, chunk_max)
+
+    return (n_rows, n_dims), min_values, max_values
 
 
 def main():
@@ -118,7 +147,7 @@ def embed(dataset_id, text_column, model_id, prefix, rerun, dimensions, batch_si
         prefixed.append(prefix + s)
     sentences = prefixed #[prefix + s for s in sentences]
 
-    total_batches = len(sentences)//batch_size
+    total_batches = math.ceil(len(sentences) / batch_size) if batch_size > 0 else 0
 
     print("embedding", len(sentences), "sentences", "in", total_batches, "batches")
     if starting_batch > 0:
@@ -156,17 +185,17 @@ def embed(dataset_id, text_column, model_id, prefix, rerun, dimensions, batch_si
             history_file.write(f"{datetime.now().isoformat()},{model_id}\n")
 
 
-    # Calculate min and max values for each index
-    min_values = np.min(embeddings, axis=0)
-    max_values = np.max(embeddings, axis=0)
+    # Calculate min/max and shape from the full embedding file (not only last batch)
+    embedding_path = os.path.join(embedding_dir, f"{embedding_id}.h5")
+    (n_rows, n_dims), min_values, max_values = get_hdf5_embedding_stats(embedding_path)
     with open(os.path.join(embedding_dir, f"{embedding_id}.json"), 'w') as f:
         json.dump({
             "id": embedding_id,
             "model_id": model_id,
             "dataset_id": dataset_id,
             "text_column": text_column,
-            # "dimensions": np_embeds.shape[1],
-            "dimensions": embeddings.shape[1],
+            "rows": n_rows,
+            "dimensions": n_dims,
             "max_seq_length": max_seq_length,
             "prefix": prefix,
             "min_values": min_values.tolist(),

@@ -15,14 +15,89 @@ import {
   asyncBufferFromUrl,
   parquetReadObjects,
 } from "hyparquet";
-import { createReadStream } from "node:fs";
+import { createReadStream, readFileSync } from "node:fs";
 import { readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { getIndexColumn, getTable, getTableColumns } from "../lib/lancedb.js";
 
 export const dataRoutes = new Hono();
 
 type JsonRecord = Record<string, unknown>;
+
+// ---------------------------------------------------------------------------
+// Scope-input schema contract (shared with Python write side)
+// ---------------------------------------------------------------------------
+interface ColumnSpec {
+  type: string;
+  nullable: boolean;
+}
+interface ScopeInputContract {
+  version: string;
+  required_columns: Record<string, ColumnSpec>;
+  optional_columns?: Record<string, ColumnSpec>;
+}
+
+const FALLBACK_CONTRACT: ScopeInputContract = {
+  version: "scope-input-v1",
+  required_columns: {
+    id: { type: "string", nullable: false },
+    ls_index: { type: "int", nullable: false },
+    x: { type: "float", nullable: false },
+    y: { type: "float", nullable: false },
+    cluster: { type: "string", nullable: false },
+    label: { type: "string", nullable: false },
+    deleted: { type: "bool", nullable: false },
+    text: { type: "string", nullable: false },
+  },
+};
+
+let scopeContract: ScopeInputContract;
+try {
+  const __filename = fileURLToPath(import.meta.url);
+  const contractPath = path.resolve(
+    path.dirname(__filename),
+    "..", "..", "..", "contracts", "scope_input.schema.json",
+  );
+  scopeContract = JSON.parse(readFileSync(contractPath, "utf-8"));
+} catch {
+  scopeContract = FALLBACK_CONTRACT;
+}
+
+interface SchemaViolation {
+  error: "schema_contract_violation";
+  dataset: string;
+  scope: string;
+  missing_columns: string[];
+  expected_contract_version: string;
+}
+
+function validateRequiredColumns(
+  rows: JsonRecord[],
+  dataset: string,
+  scope: string,
+): SchemaViolation | null {
+  if (rows.length === 0) return null;
+  const present = new Set<string>();
+  for (const row of rows) {
+    for (const key of Object.keys(row)) {
+      present.add(key);
+    }
+  }
+  const missing = Object.keys(scopeContract.required_columns).filter(
+    (col) => !present.has(col),
+  );
+  if (missing.length > 0) {
+    return {
+      error: "schema_contract_violation",
+      dataset,
+      scope,
+      missing_columns: missing,
+      expected_contract_version: scopeContract.version,
+    };
+  }
+  return null;
+}
 
 interface EdgeRow {
   edge_type: string;
@@ -274,7 +349,19 @@ function resolveScopeId(payload: JsonRecord): string | null {
   return PUBLIC_SCOPE;
 }
 
-async function getScopeMeta(dataset: string, scopeId: string): Promise<JsonRecord> {
+function resolveDataset(payload: JsonRecord): string | null {
+  const candidate = payload.dataset;
+  if (typeof candidate === "string" && candidate.trim()) return candidate;
+  return PUBLIC_DATASET;
+}
+
+export async function resolveLanceTableId(dataset: string, scopeId: string): Promise<string> {
+  const meta = await getScopeMeta(dataset, scopeId);
+  const tableId = meta.lancedb_table_id;
+  return typeof tableId === "string" && tableId ? tableId : scopeId;
+}
+
+export async function getScopeMeta(dataset: string, scopeId: string): Promise<JsonRecord> {
   const cacheKey = `${dataset}/${scopeId}`;
   const cached = scopeCache.get(cacheKey);
   if (cached) return cached;
@@ -529,47 +616,27 @@ dataRoutes.get("/datasets/:dataset/scopes/:scope", async (c) => {
 
 dataRoutes.get("/datasets/:dataset/scopes/:scope/parquet", async (c) => {
   const { dataset, scope } = c.req.param();
-  const requiredColumns = [
-    "x",
-    "y",
-    "cluster",
-    "label",
-    "deleted",
-    "ls_index",
-    "index",
-    "tile_index_64",
-    "tile_index_128",
-  ];
-  const engagementColumns = [
-    "favorites",
-    "favorite_count",
-    "likes",
-    "like_count",
-    "retweets",
-    "retweet_count",
-    "replies",
-    "reply_count",
-    "created_at",
-    "tweet_type",
-    "is_like",
-    "is_retweet",
-    "is_reply",
-  ];
-  const selected = [...requiredColumns, ...engagementColumns];
+  // Derive columns from contract + engagement extras
+  const contractRequired = Object.keys(scopeContract.required_columns);
+  const optionalColumns = Object.keys(scopeContract.optional_columns ?? {});
+  const selected = [...new Set([...contractRequired, ...optionalColumns, "index"])];
 
   try {
-    let rows: JsonRecord[] = [];
-
-    try {
-      rows = await loadParquetRows(`${dataset}/scopes/${scope}-input.parquet`, selected);
-    } catch {
-      rows = await loadParquetRows(`${dataset}/scopes/${scope}.parquet`, selected);
-    }
+    const rows = await loadParquetRows(`${dataset}/scopes/${scope}-input.parquet`, selected);
 
     const normalized = rows.map((row, idx) => {
       const lsIndex = normalizeIndex(row.ls_index ?? row.index) ?? idx;
       return { ...row, ls_index: lsIndex };
     });
+
+    // Schema drift check: ensure all required columns are present
+    const violation = validateRequiredColumns(normalized, dataset, scope);
+    if (violation) {
+      console.error(
+        `Schema contract violation for ${dataset}/${scope}: missing [${violation.missing_columns.join(", ")}]`,
+      );
+      return c.json(violation, 500);
+    }
 
     return c.json(normalized);
   } catch {
@@ -942,9 +1009,14 @@ dataRoutes.post("/indexed", async (c) => {
       400
     );
   }
-  const table = await getTable(scopeId);
-  const indexColumn = await getIndexColumn(scopeId);
-  const tableColumns = await getTableColumns(scopeId);
+  const dataset = resolveDataset(payload);
+  if (!dataset) {
+    return c.json({ error: "dataset is required" }, 400);
+  }
+  const tableId = await resolveLanceTableId(dataset, scopeId);
+  const table = await getTable(tableId);
+  const indexColumn = await getIndexColumn(tableId);
+  const tableColumns = await getTableColumns(tableId);
 
   const requestedColumns = Array.isArray(payload.columns)
     ? payload.columns.filter((col): col is string => typeof col === "string")
@@ -991,9 +1063,14 @@ dataRoutes.post("/query", async (c) => {
       400
     );
   }
-  const table = await getTable(scopeId);
-  const indexColumn = await getIndexColumn(scopeId);
-  const tableColumns = await getTableColumns(scopeId);
+  const dataset = resolveDataset(payload);
+  if (!dataset) {
+    return c.json({ error: "dataset is required" }, 400);
+  }
+  const tableId = await resolveLanceTableId(dataset, scopeId);
+  const table = await getTable(tableId);
+  const indexColumn = await getIndexColumn(tableId);
+  const tableColumns = await getTableColumns(tableId);
 
   const perPage = 100;
   const page = Math.max(0, normalizeIndex(payload.page) ?? 0);
@@ -1082,8 +1159,13 @@ dataRoutes.post("/column-filter", async (c) => {
       400
     );
   }
-  const table = await getTable(scopeId);
-  const indexColumn = await getIndexColumn(scopeId);
+  const dataset = resolveDataset(payload);
+  if (!dataset) {
+    return c.json({ error: "dataset is required" }, 400);
+  }
+  const tableId = await resolveLanceTableId(dataset, scopeId);
+  const table = await getTable(tableId);
+  const indexColumn = await getIndexColumn(tableId);
   const where = buildFilterWhere(payload.filters);
 
   const query = table.query().select([indexColumn]);

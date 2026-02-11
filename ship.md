@@ -48,6 +48,26 @@ Added per-project Vercel config and env templates:
 - `api/.env.vercel.hosted.example`
 - `documentation/vercel-deployment.md`
 
+### 2.5 Vercel projects are live (personal scope)
+Projects are deployed under `maskys-projects-0f28825e`:
+- `web-demo`: `https://web-demo-woad.vercel.app`
+- `api-demo`: `https://api-demo-phi-ashy.vercel.app`
+- `web-app`: `https://web-app-ruby-beta.vercel.app`
+- `api-app`: `https://api-app-gold.vercel.app`
+
+Mode/env status:
+- `api-demo`: `single_profile`, read-only, public dataset/scope set.
+- `api-app`: `hosted`, read-write flags set.
+- API CORS is aligned with corresponding web domains.
+- Web `VITE_API_URL` is set per environment to the matching API `/api` base.
+
+### 2.6 API deploy hardening on Vercel
+`api/vercel.json` now explicitly defines Node function build + routing for Hono:
+- build `src/index.ts` with `@vercel/node`
+- route all paths to `src/index.ts`
+
+This avoids ambiguous defaults and stabilizes Git-triggered deployments.
+
 ## 3. Flask/Python Boundary (Current)
 
 ### 3.1 Production read path
@@ -92,9 +112,10 @@ Frontend wiring:
 ## 6. Remaining Work Before Full Hosted Launch
 1. TS-native auth for per-user datasets/scopes.
 2. TS endpoints for import/job lifecycle (or stable gateway to Python workers).
-3. Persistent metadata/source-of-truth for dataset/scope discovery in hosted mode.
+3. Persistent metadata/source-of-truth for dataset/scope discovery in hosted mode (DB and/or object metadata index).
 4. Background job orchestration wiring (Modal + status persistence + notifications).
 5. Production monitoring and alerting (errors, latency, job failures).
+6. Finalize production data artifact source (`DATA_URL`) for hosted/demo read metadata at scale.
 
 ## 7. Branching Strategy
 Do not split long-lived `demo` vs `hosted` branches.

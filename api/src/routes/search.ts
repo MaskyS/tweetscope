@@ -10,27 +10,27 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { embedQuery } from "../lib/voyageai.js";
 import { vectorSearch } from "../lib/lancedb.js";
+import { getScopeMeta } from "./data.js";
 
 export const searchRoutes = new Hono();
 
 /**
- * Embedding model config per scope.
+ * Derive embedding model from scope metadata.
  *
- * In the Python server, the model is loaded dynamically from
- * {dataset}/embeddings/{embedding_id}.json at request time.
- *
- * For the TS serving API:
- * - Demo: single scope, model config from env (VOYAGE_MODEL).
- * - Multi-user: store per-scope model metadata in Postgres or
- *   alongside the scope JSON on R2 and fetch/cache on first request.
- *
- * The embedding_id param is accepted for frontend compatibility but
- * currently resolves to the single configured model. When multi-scope
- * is needed, look up model_id + dimensions from scope metadata here.
+ * Priority: scope JSON embedding.model_id → VOYAGE_MODEL env → voyage-4-lite.
+ * model_id format in scope JSON: "voyageai-voyage-4-lite" → strip provider prefix.
  */
-function getModelConfig(_embeddingId?: string) {
+function getModelConfig(scopeMeta?: Record<string, unknown>) {
+  let model = process.env.VOYAGE_MODEL ?? "voyage-4-lite";
+  if (scopeMeta?.embedding) {
+    const emb = scopeMeta.embedding as Record<string, unknown>;
+    const modelId = emb.model_id as string | undefined;
+    if (modelId) {
+      model = modelId.replace(/^voyageai-/, "");
+    }
+  }
   return {
-    model: process.env.VOYAGE_MODEL ?? "voyage-3",
+    model,
     apiKey: process.env.VOYAGE_API_KEY ?? "",
   };
 }
@@ -52,8 +52,16 @@ searchRoutes.get("/nn", async (c) => {
     return c.json({ error: parsed.error.flatten() }, 400);
   }
 
-  const { query, scope_id, dimensions, embedding_id } = parsed.data;
-  const { model, apiKey } = getModelConfig(embedding_id);
+  const { query, dataset, scope_id, dimensions } = parsed.data;
+
+  if (!scope_id) {
+    return c.json({ error: "scope_id is required for LanceDB Cloud search" }, 400);
+  }
+
+  // Fetch scope metadata once — drives both model resolution and table lookup
+  const scopeMeta = await getScopeMeta(dataset, scope_id);
+  const tableId = (scopeMeta.lancedb_table_id as string) || scope_id;
+  const { model, apiKey } = getModelConfig(scopeMeta);
 
   if (!apiKey) {
     return c.json({ error: "VOYAGE_API_KEY not configured" }, 500);
@@ -65,13 +73,7 @@ searchRoutes.get("/nn", async (c) => {
     model,
     dimensions,
   });
-
-  // 2. Search LanceDB Cloud
-  if (!scope_id) {
-    return c.json({ error: "scope_id is required for LanceDB Cloud search" }, 400);
-  }
-
-  const results = await vectorSearch(scope_id, embedding, {
+  const results = await vectorSearch(tableId, embedding, {
     limit: 100,
     where: "deleted = false",
   });

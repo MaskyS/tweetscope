@@ -1,6 +1,7 @@
 import os
 import re
 import json
+import uuid
 import argparse
 from datetime import datetime
 from latentscope.util import get_data_dir
@@ -24,6 +25,94 @@ SERVING_COLUMNS = [
     "archive_source",
 ]
 
+# ---------------------------------------------------------------------------
+# Schema-drift hardening: contract-based type normalisation & validation
+# ---------------------------------------------------------------------------
+import numpy as np
+import pandas as pd
+
+_CONTRACT_PATH = os.path.join(
+    os.path.dirname(__file__), "..", "..", "contracts", "scope_input.schema.json",
+)
+
+def load_contract(contract_path=None):
+    """Load the scope-input contract from the canonical JSON file."""
+    path = contract_path or _CONTRACT_PATH
+    with open(path) as f:
+        return json.load(f)
+
+_TYPE_NORMALIZERS = {
+    "string":      lambda s: s.fillna("").astype(str),
+    "int":         lambda s: pd.to_numeric(s, errors="coerce").fillna(0).astype(np.int64),
+    "float":       lambda s: pd.to_numeric(s, errors="coerce").astype(np.float32),
+    "bool":        lambda s: (
+        s.map(
+            lambda v: (
+                v
+                if isinstance(v, (bool, np.bool_))
+                else (
+                    str(v).strip().lower() in {"1", "true", "t", "yes", "y"}
+                    if isinstance(v, str)
+                    else bool(v)
+                )
+            )
+        ).fillna(False).astype(bool)
+    ),
+    "json_string": lambda s: s.fillna("[]").astype(str),
+}
+
+def normalize_serving_types(df, contract):
+    """Cast each column in *df* to its contract-declared type (in-place)."""
+    all_columns = {**contract["required_columns"], **contract.get("optional_columns", {})}
+    for col, spec in all_columns.items():
+        if col not in df.columns:
+            continue
+        normalizer = _TYPE_NORMALIZERS.get(spec["type"])
+        if normalizer:
+            df[col] = normalizer(df[col])
+    return df
+
+def validate_scope_input_df(df, contract):
+    """Raise ValueError if *df* violates the scope-input contract."""
+    version = contract.get("version", "unknown")
+    required = contract.get("required_columns", {})
+    errors = []
+
+    # Required columns must exist
+    missing = [c for c in required if c not in df.columns]
+    if missing:
+        errors.append(f"Missing required columns: {missing}")
+
+    # id must be string dtype
+    if "id" in df.columns and not pd.api.types.is_string_dtype(df["id"]):
+        errors.append(f"Column 'id' must be string, got {df['id'].dtype}")
+
+    # No duplicate column names
+    dupes = df.columns[df.columns.duplicated()].tolist()
+    if dupes:
+        errors.append(f"Duplicate column names: {dupes}")
+
+    # Type checks on present columns
+    all_columns = {**required, **contract.get("optional_columns", {})}
+    for col, spec in all_columns.items():
+        if col not in df.columns:
+            continue
+        t = spec["type"]
+        if t == "string" and not pd.api.types.is_string_dtype(df[col]):
+            errors.append(f"Column '{col}' expected string, got {df[col].dtype}")
+        elif t == "int" and not pd.api.types.is_integer_dtype(df[col]):
+            errors.append(f"Column '{col}' expected int, got {df[col].dtype}")
+        elif t == "float" and not pd.api.types.is_float_dtype(df[col]):
+            errors.append(f"Column '{col}' expected float, got {df[col].dtype}")
+        elif t == "bool" and not pd.api.types.is_bool_dtype(df[col]):
+            errors.append(f"Column '{col}' expected bool, got {df[col].dtype}")
+
+    if errors:
+        raise ValueError(
+            f"Scope-input contract violation (version: {version}):\n"
+            + "\n".join(f"  - {e}" for e in errors)
+        )
+
 def main():
     parser = argparse.ArgumentParser(description='Setup a scope')
     parser.add_argument('dataset_id', type=str, help='Dataset id (directory name in data folder)')
@@ -41,7 +130,7 @@ def main():
 
 
 
-def export_lance(directory, dataset, scope_id, metric="cosine", partitions=None):
+def export_lance(directory, dataset, scope_id, metric="cosine", partitions=None, cloud=False):
     import lancedb
     import pandas as pd
     import h5py
@@ -49,12 +138,12 @@ def export_lance(directory, dataset, scope_id, metric="cosine", partitions=None)
 
     dataset_path = os.path.join(directory, dataset)
     print(f"Exporting scope {scope_id} to LanceDB database in {dataset_path}")
-    
+
     # Validate directory
     if not os.path.isdir(directory):
         print(f"Error: {directory} is not a valid directory")
         return
-    
+
     # Load the scope
     scope_path = os.path.join(dataset_path, "scopes")
 
@@ -65,54 +154,64 @@ def export_lance(directory, dataset, scope_id, metric="cosine", partitions=None)
     print(f"Loading embeddings from {dataset_path}/embeddings/{scope_meta['embedding_id']}.h5")
     embeddings = h5py.File(os.path.join(dataset_path, "embeddings", f"{scope_meta['embedding_id']}.h5"), "r")
 
-    db_uri = os.path.join(dataset_path, "lancedb")
-    db = lancedb.connect(db_uri)
-
     print(f"Converting embeddings to numpy arrays", embeddings['embeddings'].shape)
     scope_df["vector"] = [np.array(row) for row in embeddings['embeddings']]
 
     if "sae_id" in scope_meta and scope_meta["sae_id"]:
         print(f"SAE scope detected, adding metadata")
-        # read in the sae indices
         sae_path = os.path.join(dataset_path, "saes", f"{scope_meta['sae_id']}.h5")
         with h5py.File(sae_path, 'r') as f:
             all_top_indices = np.array(f["top_indices"])
             all_top_acts = np.array(f["top_acts"])
 
-        # scope_df["sae_indices"] = all_top_indices
-        # scope_df["sae_acts"] = all_top_acts
         scope_df["sae_indices"] = [row.tolist() for row in all_top_indices]
         scope_df["sae_acts"] = [row.tolist() for row in all_top_acts]
 
-    table_name = scope_id
-
-    # Check if the table already exists
-    if scope_id in db.table_names():
-        # Remove the existing table and its index
-        db.drop_table(table_name)
-        print(f"Existing table '{table_name}' has been removed.")
-
-    print(f"Creating table '{table_name}'")
-    tbl = db.create_table(table_name, scope_df)
-
-    print(f"Creating ANN index for embeddings on table '{table_name}'")
     dim = embeddings['embeddings'].shape[1]
     n_rows = len(scope_df)
     if partitions is None:
         partitions = max(1, int(n_rows ** 0.5))
     sub_vectors = dim // 16
-    print(f"Partitioning into {partitions} partitions ({n_rows} rows), {sub_vectors} sub-vectors")
-    tbl.create_index(num_partitions=partitions, num_sub_vectors=sub_vectors, metric=metric)
 
-    print(f"Creating index for cluster on table '{table_name}'")
-    tbl.create_scalar_index("cluster", index_type="BTREE")
+    # Use collision-proof table name from scope JSON, fall back to scope_id for old scopes
+    table_name = scope_meta.get("lancedb_table_id", scope_id)
+    has_sae = "sae_id" in scope_meta and scope_meta["sae_id"]
 
-    if "sae_id" in scope_meta and scope_meta["sae_id"]:
-        print(f"Creating index for sae_indices on table '{table_name}'")
-        tbl.create_scalar_index("sae_indices", index_type="LABEL_LIST")
+    def _create_table(db, table_name):
+        if table_name in db.table_names():
+            db.drop_table(table_name)
+            print(f"Existing table '{table_name}' has been removed.")
 
+        print(f"Creating table '{table_name}'")
+        tbl = db.create_table(table_name, scope_df)
 
-    print(f"Table '{table_name}' created successfully")  
+        print(f"Creating ANN index for embeddings on table '{table_name}'")
+        print(f"Partitioning into {partitions} partitions ({n_rows} rows), {sub_vectors} sub-vectors")
+        tbl.create_index(num_partitions=partitions, num_sub_vectors=sub_vectors, metric=metric)
+
+        print(f"Creating index for cluster on table '{table_name}'")
+        tbl.create_scalar_index("cluster", index_type="BTREE")
+
+        if has_sae:
+            print(f"Creating index for sae_indices on table '{table_name}'")
+            tbl.create_scalar_index("sae_indices", index_type="LABEL_LIST")
+
+        print(f"Table '{table_name}' created successfully")
+
+    # Local export
+    db_uri = os.path.join(dataset_path, "lancedb")
+    db = lancedb.connect(db_uri)
+    _create_table(db, table_name)
+
+    # Cloud export
+    if cloud:
+        cloud_uri = os.environ.get("LANCEDB_URI")
+        cloud_key = os.environ.get("LANCEDB_API_KEY")
+        if not cloud_uri or not cloud_key:
+            raise ValueError("LANCEDB_URI and LANCEDB_API_KEY env vars required for --cloud export")
+        print(f"\nSyncing to LanceDB Cloud: {cloud_uri}")
+        cloud_db = lancedb.connect(cloud_uri, api_key=cloud_key)
+        _create_table(cloud_db, table_name)  
 
 def scope(dataset_id, embedding_id, umap_id, cluster_id, cluster_labels_id, label, description, scope_id=None, sae_id=None):
     DATA_DIR = get_data_dir()
@@ -153,6 +252,12 @@ def scope(dataset_id, embedding_id, umap_id, cluster_id, cluster_labels_id, labe
     }
     if(sae_id):
         scope["sae_id"] = sae_id
+
+    # Collision-proof LanceDB table naming: {dataset_id}__{scope_uid}
+    scope_uid = str(uuid.uuid4())
+    lancedb_table_id = f"{dataset_id}__{scope_uid}"
+    scope["scope_uid"] = scope_uid
+    scope["lancedb_table_id"] = lancedb_table_id
 
     # read each json file and add its contents to the scope file
     dataset_file = os.path.join(DATA_DIR, dataset_id, "meta.json")
@@ -357,9 +462,17 @@ def scope(dataset_id, embedding_id, umap_id, cluster_id, cluster_labels_id, labe
     input_df.reset_index(inplace=True)
     input_df = input_df[input_df['index'].isin(scope_parquet['ls_index'])]
     combined_df = input_df.join(scope_parquet.set_index('ls_index'), on='index', rsuffix='_ls')
+    # ls_index is consumed as the join key; restore it from the 'index' column
+    combined_df['ls_index'] = combined_df['index']
     # Select only canonical serving columns (skip any not present in this dataset)
     available = [c for c in SERVING_COLUMNS if c in combined_df.columns]
     combined_df = combined_df[available]
+
+    # Schema-drift hardening: normalize types and validate before write
+    contract = load_contract()
+    combined_df = normalize_serving_types(combined_df, contract)
+    validate_scope_input_df(combined_df, contract)
+
     combined_df.to_parquet(os.path.join(directory, id + "-input.parquet"))
 
     print("exporting to lancedb")
