@@ -310,7 +310,7 @@ float32 is done. Migrate H5 to Parquet only when pipeline topology
 #### C0) Backward-compat removal (P0)
 Cutover should be explicit and non-legacy:
 1. Remove `DATA_URL + "/files/"` legacy API-proxy mode from serving path.
-2. Remove API fallback to `scopes/<scope>.parquet`; require `scopes/<scope>-input.parquet`.
+2. ~~Remove API fallback to `scopes/<scope>.parquet`; require `scopes/<scope>-input.parquet`.~~ **Done.** `data.ts` `/parquet` route now requires `-input.parquet` with no fallback.
 3. Fail fast on missing required artifacts instead of silent fallback behavior (implemented for Toponymy import path; keep as system-wide rule).
 
 #### C1) Hosted control plane (P1)
@@ -503,7 +503,9 @@ Define: raw uploads retention, intermediate artifact retention,
  │  │    Returns: matching ls_index values                         │   │
  │  │                                                              │   │
  │  │  GET /search/nn                                              │   │
- │  │    → VoyageAI embed query → LanceDB vector search            │   │
+ │  │    → getScopeMeta() → derive model from embedding.model_id  │   │
+ │  │    → VoyageAI embed query (model from scope, not env-only)  │   │
+ │  │    → LanceDB vector search on lancedb_table_id              │   │
  │  │    Returns: indices + distances                              │   │
  │  └─────────────────────────────────────────────────────────────┘   │
  │                                                                     │
@@ -811,6 +813,8 @@ hundreds of scopes.
 | Resource | Value |
 | -------- | ----- |
 | Bucket | `tweetscope-data` |
+| Account ID | `34a9dc9b32cd03c6acb3c531f2544b73` |
+| S3 endpoint | `https://34a9dc9b32cd03c6acb3c531f2544b73.r2.cloudflarestorage.com` |
 | Custom domain | `https://data.maskys.com` (maskys.com zone `63a8cdc7fe78ab3963a7347749a522c4`) |
 | `DATA_URL` | `https://data.maskys.com` |
 | CORS | `GET`, `HEAD`; headers: `Range`, `Content-Type`; exposed: `Content-Length`, `Content-Range`, `Accept-Ranges`; max-age 86400 |
@@ -820,6 +824,19 @@ hundreds of scopes.
 - `DATA_URL` is implemented in the TS API (data.ts: `buildFileUrl()`, `loadJsonFile()`,
   `loadParquetRows()`, `asyncBufferFromUrl()`)
 - Upload script: `scripts/sync_cdn_r2.py` (implements D1 allowlist, skips D2 denylist; dry-run by default, `--execute` to apply)
+
+### R2 credentials for upload (sync_cdn_r2.py)
+
+`sync_cdn_r2.py` uses `boto3` (S3-compatible API). R2 provides AWS-style credentials via **R2 API Tokens** (Dashboard → R2 → Manage R2 API Tokens → Create API Token, scope: Object Read & Write on `tweetscope-data`).
+
+Required env vars in `.env` (gitignored):
+```
+R2_ENDPOINT_URL="https://34a9dc9b32cd03c6acb3c531f2544b73.r2.cloudflarestorage.com"
+AWS_ACCESS_KEY_ID="<R2 API token access key>"
+AWS_SECRET_ACCESS_KEY="<R2 API token secret>"
+```
+
+These are **not** AWS credentials — they're R2-issued tokens that use the S3 credential format. boto3 reads `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` from env automatically.
 
 ### Custom domain vs r2.dev
 
@@ -972,9 +989,10 @@ Before writing `-input.parquet`, `scope.py` calls:
 
 #### E2) Read-time enforcement (API)
 In `data.ts`, the `/parquet` route:
-1. Derives selected columns from the contract (required + optional), not a hardcoded list
-2. After loading rows, `validateRequiredColumns()` checks all required columns are present
-3. Returns structured 500 with `{ error, dataset, scope, missing_columns, expected_contract_version }` on violation
+1. Loads exclusively from `{scope}-input.parquet` (no fallback to `{scope}.parquet`)
+2. Derives selected columns from the contract (required + optional), not a hardcoded list
+3. After loading rows, `validateRequiredColumns()` checks all required columns are present
+4. Returns structured 500 with `{ error, dataset, scope, missing_columns, expected_contract_version }` on violation
 
 #### E3) Deploy gate validator
 `scripts/validate_scope_artifacts.py` — CLI that checks:
@@ -1050,7 +1068,10 @@ R2 bucket `tweetscope-data` is created with custom domain `https://data.maskys.c
 ##### P0.4 — LanceDB table name resolution — implemented
 See section B1 for details. `scope_uid` + `lancedb_table_id` indirection is implemented end-to-end:
 - **Write path**: `scope.py` generates `{dataset_id}__{uuid4}` at scope creation, `export_lance()` uses it for both local and cloud tables.
-- **Read path**: `data.ts` resolves `lancedb_table_id` from scope JSON via `resolveLanceTableId(dataset, scopeId)` at all 4 LanceDB call sites (`/indexed`, `/query`, `/column-filter`, `/search/nn`).
+- **Read path**: `data.ts` exports `getScopeMeta(dataset, scopeId)` which caches scope JSON and exposes `lancedb_table_id`. Used by:
+  - `resolveLanceTableId()` — thin wrapper, used by `/indexed`, `/query`, `/column-filter`
+  - `search.ts` `/nn` handler — calls `getScopeMeta()` directly to get both `lancedb_table_id` and `embedding.model_id` in one fetch
+- **Search model resolution**: `search.ts` derives the VoyageAI model from `scopeMeta.embedding.model_id` (strips `voyageai-` prefix). Fallback: `VOYAGE_MODEL` env → `voyage-4-lite`.
 - **Backfill**: `scripts/backfill_lancedb_table_id.py` adds the field to existing scope JSONs. After backfill, re-run `export_lance(cloud=True)` to create the table under the new name.
 - **Backward compat**: Falls back to `scope_id` when `lancedb_table_id` is absent in scope JSON (old scopes).
 
