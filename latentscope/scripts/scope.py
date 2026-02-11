@@ -57,11 +57,11 @@ def _coerce_bool(s):
 # Type casters that do NOT fill nulls — fillna is handled by normalize_serving_types
 # based on nullable/default semantics from the contract.
 _TYPE_CASTERS = {
-    "string":      lambda s: s.astype(str).where(s.notna(), other=None),
+    "string":      lambda s: s.where(s.isna(), s.astype(str)),  # cast non-null to str, preserve NaN
     "int":         lambda s: pd.to_numeric(s, errors="coerce"),
     "float":       lambda s: pd.to_numeric(s, errors="coerce").astype(np.float32),
     "bool":        _coerce_bool,
-    "json_string": lambda s: s.astype(str).where(s.notna(), other=None),
+    "json_string": lambda s: s.where(s.isna(), s.astype(str)),  # cast non-null to str, preserve NaN
 }
 
 # Defaults for non-nullable columns (must not contain nulls after normalization)
