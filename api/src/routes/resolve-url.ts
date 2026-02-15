@@ -7,8 +7,6 @@
 
 import { Hono } from "hono";
 
-export const resolveUrlRoutes = new Hono();
-
 const ALLOWED_DOMAINS = new Set(["t.co"]);
 
 function isAllowedUrl(url: string): boolean {
@@ -34,28 +32,28 @@ async function resolveRedirect(url: string): Promise<string> {
   }
 }
 
-resolveUrlRoutes.post("/resolve-url", async (c) => {
-  const body = await c.req.json<{ url?: string }>();
-  if (!body.url) {
-    return c.json({ error: "url is required" }, 400);
-  }
+export const resolveUrlRoutes = new Hono()
+  .post("/resolve-url", async (c) => {
+    const body = await c.req.json<{ url?: string }>();
+    if (!body.url) {
+      return c.json({ error: "url is required" }, 400);
+    }
 
-  const resolved = await resolveRedirect(body.url);
-  return c.json({ url: resolved });
-});
+    const resolved = await resolveRedirect(body.url);
+    return c.json({ url: resolved });
+  })
+  .post("/resolve-urls", async (c) => {
+    const body = await c.req.json<{ urls?: string[] }>();
+    if (!body.urls || !Array.isArray(body.urls)) {
+      return c.json({ error: "urls array is required" }, 400);
+    }
 
-resolveUrlRoutes.post("/resolve-urls", async (c) => {
-  const body = await c.req.json<{ urls?: string[] }>();
-  if (!body.urls || !Array.isArray(body.urls)) {
-    return c.json({ error: "urls array is required" }, 400);
-  }
+    const results = await Promise.all(
+      body.urls.map(async (url) => ({
+        original: url,
+        resolved: await resolveRedirect(url),
+      }))
+    );
 
-  const results = await Promise.all(
-    body.urls.map(async (url) => ({
-      original: url,
-      resolved: await resolveRedirect(url),
-    }))
-  );
-
-  return c.json({ urls: results });
-});
+    return c.json({ urls: results });
+  });

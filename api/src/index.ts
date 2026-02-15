@@ -84,29 +84,25 @@ app.use(
 );
 
 // --- Routes ---
+// Chain all .route() and inline handlers so TypeScript can infer the full type for RPC.
 
-app.route("/api/search", searchRoutes);
-app.route("/api", resolveUrlRoutes);
-app.route("/api", dataRoutes);
-
-// Health check
-app.get("/api/health", (c) => c.json({ status: "ok" }));
-
-// App config — keys must match web/src/App.jsx:64-66
-app.get("/api/app-config", (c) =>
-  c.json({
-    mode: appMode,
-    read_only: readOnly,
-    public_dataset_id: publicDataset,
-    public_scope_id: publicScope,
-    features,
-    limits: { max_upload_mb: Number.isFinite(maxUploadMb) ? maxUploadMb : 1024 },
-    version: "ts-api-0.1.0",
-  })
-);
-
-// Version
-app.get("/api/version", (c) => c.text("ts-api-0.1.0"));
+const routes = app
+  .route("/api/search", searchRoutes)
+  .route("/api", resolveUrlRoutes)
+  .route("/api", dataRoutes)
+  .get("/api/health", (c) => c.json({ status: "ok" }))
+  .get("/api/app-config", (c) =>
+    c.json({
+      mode: appMode,
+      read_only: readOnly,
+      public_dataset_id: publicDataset,
+      public_scope_id: publicScope,
+      features,
+      limits: { max_upload_mb: Number.isFinite(maxUploadMb) ? maxUploadMb : 1024 },
+      version: "ts-api-0.1.0",
+    })
+  )
+  .get("/api/version", (c) => c.text("ts-api-0.1.0"));
 
 // --- Server ---
 
@@ -122,3 +118,4 @@ if (process.env.NODE_ENV !== "production") {
 
 // Export for serverless (Vercel, Cloudflare Workers)
 export default app;
+export type AppType = typeof routes;

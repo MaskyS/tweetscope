@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react';
-import { queryClient } from '../api/queryClient';
+import { queryClient } from '../lib/apiService';
 
 export default function useNearestNeighborsSearch({ userId, datasetId, scope, deletedIndices }) {
   const [distances, setDistances] = useState([]);

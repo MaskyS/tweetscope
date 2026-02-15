@@ -1,8 +1,6 @@
 import json
 from .providers.openai import OpenAIEmbedProvider, OpenAIChatProvider
 from .providers.voyageai import VoyageAIEmbedProvider
-from .providers.nltk import NLTKChatProvider
-from .providers.litellm_provider import LiteLLMChatProvider
 
 # We use a universal id system for models where its:
 # <provider>-<model-name> with model-name replacing "/"" with "___"
@@ -63,13 +61,6 @@ def get_chat_model(id):
             "url": "http://localhost:11434/v1",
             "params": {}
         }
-    elif id.startswith("litellm-"):
-        # LiteLLM provider: litellm-gemini/gemini-3-flash-preview, litellm-openai/gpt-4o, etc.
-        model = {
-            "provider": "litellm",
-            "name": id.split("litellm-")[1],  # e.g., "gemini/gemini-3-flash-preview"
-            "params": {}
-        }
     else:
         model = get_chat_model_dict(id)
 
@@ -77,9 +68,5 @@ def get_chat_model(id):
         return OpenAIChatProvider(model['name'], model['params'])
     if model['provider'] == "ollama":
         return OpenAIChatProvider(model['name'], model['params'], base_url=model['url'])
-    if model['provider'] == "nltk":
-        return NLTKChatProvider(model['name'], model['params'])
-    if model['provider'] == "litellm":
-        return LiteLLMChatProvider(model['name'], model['params'])
     raise ValueError(f"Unsupported chat provider: {model['provider']}")
 

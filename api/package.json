@@ -13,8 +13,9 @@
   },
   "dependencies": {
     "@hono/node-server": "^1.13.0",
+    "@hono/zod-validator": "^0.7.6",
     "@lancedb/lancedb": "^0.15.0",
-    "hono": "^4.6.0",
+    "hono": "^4.11.9",
     "zod": "^3.23.0"
   },
   "devDependencies": {

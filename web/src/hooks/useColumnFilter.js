@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { queryClient } from '../api/queryClient';
+import { queryClient } from '../lib/apiService';
 
 const useColumnFilter = (userId, datasetId, scope) => {
   const [columnToValue, setColumnToValue] = useState({});

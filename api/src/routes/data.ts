@@ -14,8 +14,6 @@ import { graphRoutes } from "./graph.js";
 import { queryRoutes } from "./query.js";
 import { viewsRoutes } from "./views.js";
 
-export const dataRoutes = new Hono();
-
 const rawDataUrl = process.env.DATA_URL?.replace(/\/$/, "");
 if (rawDataUrl && rawDataUrl.endsWith("/api")) {
   throw new Error(
@@ -23,9 +21,11 @@ if (rawDataUrl && rawDataUrl.endsWith("/api")) {
   );
 }
 
-dataRoutes.route("/", catalogRoutes);
-dataRoutes.route("/", viewsRoutes);
-dataRoutes.route("/", graphRoutes);
-dataRoutes.route("/", queryRoutes);
+// Chain .route() calls so the full type is inferred for RPC
+export const dataRoutes = new Hono()
+  .route("/", catalogRoutes)
+  .route("/", viewsRoutes)
+  .route("/", graphRoutes)
+  .route("/", queryRoutes);
 
 export { getScopeMeta } from "./dataShared.js";

@@ -17,7 +17,10 @@
     "checkJs": false,
     "baseUrl": ".",
     "paths": {
-      "@/*": ["src/*"]
+      "@/*": ["src/*"],
+      "@api/*": ["../api/src/*"],
+      "hono": ["../api/node_modules/hono"],
+      "hono/*": ["../api/node_modules/hono/*"]
     },
     "types": ["vite/client"]
   },

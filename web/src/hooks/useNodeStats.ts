@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { graphClient } from '../api/graphClient';
+import { graphClient } from '../lib/apiService';
 import type { NodeStatsEntry, NodeStatsResponse } from '../api/types';
 
 interface UseNodeStatsResult {

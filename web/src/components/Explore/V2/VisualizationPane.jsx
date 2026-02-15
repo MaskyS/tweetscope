@@ -1,13 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef, forwardRef, useImperativeHandle } from 'react';
-import { groups } from 'd3-array';
-import PropTypes from 'prop-types';
-import Scatter, { getClusterColorCSS, getClusterColorRGBA } from './DeckGLScatter';
-import AnnotationPlot from '../../AnnotationPlot';
-import HullPlot from '../../HullPlot';
-import TilePlot from '../../TilePlot';
-import { processHulls } from './util';
-// import PointLabel from './PointLabel'; // Removed - DeckGLScatter handles this internally
-import { filterConstants } from './Search/utils';
+import Scatter, { getClusterColorCSS } from './DeckGLScatter';
 
 import { useColorMode } from '../../../hooks/useColorMode';
 import ConnectionBadges from './ConnectionBadges';
@@ -102,25 +94,6 @@ function classifyUrls(urlsJson) {
   return { quotedTweets, externalUrls };
 }
 
-function rgbaFromRgbArray(rgb, alpha) {
-  if (!rgb || rgb.length < 3) return `rgba(0, 0, 0, ${alpha})`;
-  return `rgba(${rgb[0]}, ${rgb[1]}, ${rgb[2]}, ${alpha})`;
-}
-
-// VisualizationPane.propTypes = {
-//   hoverAnnotations: PropTypes.array.isRequired,
-//   hoveredCluster: PropTypes.object,
-//   cluster: PropTypes.object,
-//   scope: PropTypes.object,
-//   selectedAnnotations: PropTypes.array.isRequired,
-//   onScatter: PropTypes.func.isRequired,
-//   onSelect: PropTypes.func.isRequired,
-//   onHover: PropTypes.func.isRequired,
-//   hovered: PropTypes.object,
-//   dataset: PropTypes.object.isRequired,
-//   containerRef: PropTypes.object.isRequired,
-// };
-
 const VisualizationPane = forwardRef(function VisualizationPane({
   width,
   height,
@@ -168,9 +141,6 @@ const VisualizationPane = forwardRef(function VisualizationPane({
 
   const { clusterFilter, shownIndices, filterConfig, filteredIndices } = useFilter();
 
-  // only show the hull if we are filtering by cluster
-  const showHull = filterConfig?.type === filterConstants.CLUSTER;
-
   const maxZoom = 40;
 
   // Ref for scatter component to enable programmatic zoom
@@ -187,24 +157,9 @@ const VisualizationPane = forwardRef(function VisualizationPane({
     },
   }), []);
 
-  const [xDomain, setXDomain] = useState([-1, 1]);
-  const [yDomain, setYDomain] = useState([-1, 1]);
-  const [transform, setTransform] = useState({ k: 1, x: 0, y: 0 });
-  const handleView = useCallback(
-    (xDomain, yDomain, transform) => {
-      setXDomain(xDomain);
-      setYDomain(yDomain);
-      setTransform(transform);
-    },
-    [setXDomain, setYDomain]
-  );
+  const handleView = useCallback(() => {}, []);
 
-  // const [isFullScreen, setIsFullScreen] = useState(false);
-  const [isFullScreen, setIsFullScreen] = useState(true);
   const umapRef = useRef(null);
-  const [umapOffset, setUmapOffset] = useState(0);
-
-  const size = [width, height];
 
   const isFilterActive = !!filterConfig;
   const filteredIndexSet = useMemo(() => new Set(filteredIndices || []), [filteredIndices]);
@@ -246,64 +201,7 @@ const VisualizationPane = forwardRef(function VisualizationPane({
     });
   }, [scopeRows, isFilterActive, filteredIndexSet, timeRange, timestamps]);
 
-  const points = useMemo(() => {
-    return scopeRows
-      .filter((p) => !p.deleted)
-      .map((p) => {
-        return [p.x, p.y];
-      });
-  }, [scopeRows]);
 
-  // const [tooltipPosition, setTooltipPosition] = useState({ x: 0, y: 0 });
-  // useEffect(() => {
-  //   console.log('==== hovered ==== ', hovered);
-  //   if (hovered) {
-  //     // console.log("hovered", hovered, scopeRows[hovered.index])
-  //     const point = scopeRows[hovered.index];
-  //     if (point && xDomain && yDomain) {
-  //       let px = point.x;
-  //       if (px < xDomain[0]) px = xDomain[0];
-  //       if (px > xDomain[1]) px = xDomain[1];
-  //       let py = point.y;
-  //       if (py < yDomain[0]) py = yDomain[0];
-  //       if (py > yDomain[1]) py = yDomain[1];
-  //       const xPos = ((px - xDomain[0]) / (xDomain[1] - xDomain[0])) * width + 19;
-  //       const yPos = ((py - yDomain[1]) / (yDomain[0] - yDomain[1])) * size[1] + umapOffset - 28;
-  //       // console.log("xPos", xPos, "yPos", yPos)
-  //       setTooltipPosition({
-  //         x: xPos,
-  //         y: yPos,
-  //       });
-  //     }
-  //   }
-  // }, [hovered, scopeRows, xDomain, yDomain, width, height, umapOffset]);
-
-  // derive the hulls from the cluster, and filter deleted points via an accessor
-  const clusterHulls = useMemo(() => {
-    if (!clusterFilter.cluster || !scopeRows) return [];
-    return processHulls([clusterFilter.cluster], scopeRows, (d) => (d.deleted ? null : [d.x, d.y]));
-  }, [clusterFilter.cluster, scopeRows]);
-
-  const hoveredHulls = useMemo(() => {
-    if (!hoveredCluster || !scopeRows) return [];
-    return processHulls([hoveredCluster], scopeRows, (d) => (d.deleted ? null : [d?.x, d?.y]));
-  }, [hoveredCluster, scopeRows]);
-
-  // TODO: these should just be based on which tile we choose, 32, 64 or 128
-  const tileMeta = useMemo(() => {
-    return {
-      size: 2 / 64,
-      cols: 64,
-    };
-  }, []);
-  const tiles = useMemo(() => {
-    return groups(scopeRows, (d) => d.tile_index_64).map((tile) => {
-      return {
-        tile_index: tile[0],
-        points: tile[1],
-      };
-    });
-  }, [scopeRows]);
 
   // ====================================================================================================
   // Configuration Panel
@@ -484,23 +382,6 @@ const VisualizationPane = forwardRef(function VisualizationPane({
     navigator.clipboard.writeText(hoverCardData.rawText).catch(() => {});
   }, [hoverCardData?.rawText]);
 
-  const hoverClusterRgb = useMemo(() => {
-    if (!hoveredCluster) return null;
-    return getClusterColorRGBA(hoveredCluster.cluster, isDarkMode);
-  }, [hoveredCluster, isDarkMode]);
-
-  const selectedClusterRgb = useMemo(() => {
-    if (!clusterFilter.cluster) return null;
-    return getClusterColorRGBA(clusterFilter.cluster.cluster, isDarkMode);
-  }, [clusterFilter.cluster, isDarkMode]);
-
-  const hoverHullFill = hoverClusterRgb ? rgbaFromRgbArray(hoverClusterRgb, 0.22) : (isDarkMode ? 'rgba(191, 232, 217, 0.2)' : 'rgba(58, 169, 159, 0.18)');
-  const hoverHullStroke = hoverClusterRgb ? rgbaFromRgbArray(hoverClusterRgb, 0.92) : (isDarkMode ? 'rgba(221, 241, 228, 0.9)' : 'rgba(36, 131, 123, 0.88)');
-  const selectedHullFill = selectedClusterRgb ? rgbaFromRgbArray(selectedClusterRgb, 0.24) : (isDarkMode ? 'rgba(171, 207, 226, 0.22)' : 'rgba(67, 133, 190, 0.2)');
-  const selectedHullStroke = selectedClusterRgb ? rgbaFromRgbArray(selectedClusterRgb, 0.96) : (isDarkMode ? 'rgba(198, 221, 232, 0.92)' : 'rgba(32, 94, 166, 0.9)');
-  const hoverAnnotationFill = hoverClusterRgb ? rgbaFromRgbArray(hoverClusterRgb, 0.98) : getClusterColorCSS(0, isDarkMode);
-  const selectedAnnotationFill = isDarkMode ? 'rgba(171, 207, 226, 0.96)' : 'rgba(32, 94, 166, 0.94)';
-  const annotationStroke = isDarkMode ? 'rgba(242, 240, 229, 0.95)' : 'rgba(16, 15, 15, 0.92)';
 
   const hoverConnectionStats = useMemo(() => {
     if (hoveredIndex === null || hoveredIndex === undefined) return null;
@@ -603,7 +484,7 @@ const VisualizationPane = forwardRef(function VisualizationPane({
         />
       </div>
 
-      <div className={styles.scatters + ' ' + (isFullScreen ? styles.fullScreen : '')}>
+      <div className={`${styles.scatters} ${styles.fullScreen}`}>
         {scope && (
           <Scatter
             ref={scatterRef}
@@ -627,79 +508,6 @@ const VisualizationPane = forwardRef(function VisualizationPane({
             maxZoom={maxZoom}
           />
         )}
-        {hoveredCluster && hoveredHulls && scope.cluster_labels_lookup && (
-          <HullPlot
-            hulls={hoveredHulls}
-            fill={hoverHullFill}
-            stroke={hoverHullStroke}
-            strokeWidth={2.5}
-            // if there are selected indices already, that means other points will be less visible
-            // so we can make the hull a bit more transparent
-            opacity={0.2}
-            duration={0}
-            xDomain={xDomain}
-            yDomain={yDomain}
-            width={width}
-            height={height}
-            label={scope.cluster_labels_lookup[hoveredCluster.cluster]}
-            k={transform.k}
-            maxZoom={maxZoom}
-          />
-        )}
-        {/* Cluster is selected via filter */}
-        {showHull &&
-          clusterFilter.cluster &&
-          clusterFilter.cluster.hull &&
-          !scope.ignore_hulls &&
-          scope.cluster_labels_lookup && (
-            <HullPlot
-              hulls={clusterHulls}
-              fill={selectedHullFill}
-              stroke={selectedHullStroke}
-              strokeWidth={3}
-              opacity={0.25}
-              duration={0}
-              xDomain={xDomain}
-              yDomain={yDomain}
-              width={width}
-              height={height}
-              label={scope.cluster_labels_lookup[clusterFilter.cluster.cluster]}
-            />
-          )}
-        <AnnotationPlot
-          points={hoverAnnotations}
-          stroke={annotationStroke}
-          fill={hoverAnnotationFill}
-          size="16"
-          xDomain={xDomain}
-          yDomain={yDomain}
-          width={width}
-          height={height}
-        />
-        <AnnotationPlot
-          points={selectedAnnotations}
-          stroke={annotationStroke}
-          fill={selectedAnnotationFill}
-          size="16"
-          xDomain={xDomain}
-          yDomain={yDomain}
-          width={width}
-          height={height}
-        />
-        {vizConfig.showHeatMap && tiles?.length > 1 && (
-          <TilePlot
-            tiles={tiles}
-            tileMeta={tileMeta}
-            xDomain={xDomain}
-            yDomain={yDomain}
-            width={width}
-            height={height}
-            fill="gray"
-            // stroke="black"
-          />
-        )}
-        {/* PointLabel removed - numbered dots were conflicting with DeckGL coordinates */}
-        {/* <CrossHair xDomain={xDomain} yDomain={yDomain} width={width} height={height} /> */}
 
         {vizConfig.showTimeline && timelineHasDates && (
           <TimelineControls
@@ -872,57 +680,6 @@ const VisualizationPane = forwardRef(function VisualizationPane({
         );
       })()}
 
-      {/* {!isMobileDevice() && (
-              <div className="hovered-point">
-                  {hoveredCluster && (
-                      <span>
-                          <span className="key">Cluster {hoveredCluster.cluster}:</span>
-                          <span className="value">{hoveredCluster.label}</span>
-                      </span>
-                  )}
-                  {hovered &&
-                      Object.keys(hovered).map((key, idx) => {
-                          let d = hovered[key];
-                if (typeof d === "object" && !Array.isArray(d)) {
-                    d = JSON.stringify(d);
-                }
-                let meta =
-                    dataset.column_metadata && dataset.column_metadata[key];
-                let value;
-                if (meta && meta.image) {
-                  value = (
-                      <span className="value" key={idx}>
-                          <img src={d} alt={key} height={64} />
-                      </span>
-                  );
-              } else if (meta && meta.url) {
-                  value = (
-                      <span className="value" key={idx}>
-                          <a href={d}>url</a>
-                      </span>
-                  );
-              } else if (meta && meta.type == "array") {
-                  value = (
-                      <span className="value" key={idx}>
-                          [{d.length}]
-                      </span>
-                  );
-              } else {
-                    value = (
-                        <span className="value" key={idx}>
-                            {d}
-                        </span>
-                    );
-                }
-                return (
-                    <span key={key}>
-                        <span className="key">{key}:</span>
-                        {value}
-                    </span>
-                );
-            })}
-              </div>
-          )} */}
     </div>
   );
 });

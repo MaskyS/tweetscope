@@ -1,14 +1,5 @@
 [
   {
-    "provider": "nltk",
-    "name": "top-words",
-    "id": "nltk-top-words",
-    "params": {
-      "max_tokens": -1,
-      "top_words": 3
-    }
-  },
-  {
     "provider": "openai",
     "name": "gpt-5.1",
     "id": "openai-gpt-5.1",

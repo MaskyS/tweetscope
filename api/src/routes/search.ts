@@ -8,11 +8,10 @@
 
 import { Hono } from "hono";
 import { z } from "zod";
+import { zValidator } from "@hono/zod-validator";
 import { embedQuery } from "../lib/voyageai.js";
 import { vectorSearch } from "../lib/lancedb.js";
 import { getScopeMeta } from "./data.js";
-
-export const searchRoutes = new Hono();
 
 /**
  * Derive embedding model from scope metadata.
@@ -46,45 +45,41 @@ const nnQuerySchema = z.object({
     .transform((v) => (v ? parseInt(v, 10) : undefined)),
 });
 
-searchRoutes.get("/nn", async (c) => {
-  const parsed = nnQuerySchema.safeParse(c.req.query());
-  if (!parsed.success) {
-    return c.json({ error: parsed.error.flatten() }, 400);
-  }
+export const searchRoutes = new Hono()
+  .get("/nn", zValidator("query", nnQuerySchema), async (c) => {
+    const { query, dataset, scope_id, dimensions } = c.req.valid("query");
 
-  const { query, dataset, scope_id, dimensions } = parsed.data;
+    if (!scope_id) {
+      return c.json({ error: "scope_id is required for LanceDB Cloud search" }, 400);
+    }
 
-  if (!scope_id) {
-    return c.json({ error: "scope_id is required for LanceDB Cloud search" }, 400);
-  }
+    // Fetch scope metadata once — drives both model resolution and table lookup
+    const scopeMeta = await getScopeMeta(dataset, scope_id);
+    const tableId = (scopeMeta.lancedb_table_id as string) || scope_id;
+    const { model, apiKey } = getModelConfig(scopeMeta);
 
-  // Fetch scope metadata once — drives both model resolution and table lookup
-  const scopeMeta = await getScopeMeta(dataset, scope_id);
-  const tableId = (scopeMeta.lancedb_table_id as string) || scope_id;
-  const { model, apiKey } = getModelConfig(scopeMeta);
+    if (!apiKey) {
+      return c.json({ error: "VOYAGE_API_KEY not configured" }, 500);
+    }
 
-  if (!apiKey) {
-    return c.json({ error: "VOYAGE_API_KEY not configured" }, 500);
-  }
+    // 1. Embed the query via VoyageAI REST
+    const embedding = await embedQuery(query, {
+      apiKey,
+      model,
+      dimensions,
+    });
+    const results = await vectorSearch(tableId, embedding, {
+      limit: 100,
+      where: "deleted = false",
+    });
 
-  // 1. Embed the query via VoyageAI REST
-  const embedding = await embedQuery(query, {
-    apiKey,
-    model,
-    dimensions,
+    const indices = results.map((r) => r.index);
+    const distances = results.map((r) => r._distance);
+
+    // Match the response shape the frontend expects (apiService.js:176-184)
+    return c.json({
+      indices,
+      distances,
+      search_embedding: [embedding],
+    });
   });
-  const results = await vectorSearch(tableId, embedding, {
-    limit: 100,
-    where: "deleted = false",
-  });
-
-  const indices = results.map((r) => r.index);
-  const distances = results.map((r) => r._distance);
-
-  // Match the response shape the frontend expects (apiService.js:176-184)
-  return c.json({
-    indices,
-    distances,
-    search_embedding: [embedding],
-  });
-});

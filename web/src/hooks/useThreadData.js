@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { graphClient } from '../api/graphClient';
-import { queryClient } from '../api/queryClient';
+import { graphClient, queryClient } from '../lib/apiService';
 
 /**
  * Fetches a thread (parent chain + descendants) and enriches internal tweets with full row data.

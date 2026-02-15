@@ -79,7 +79,3 @@ class OpenAIChatProvider(ChatModelProvider):
         )
         return response.choices[0].message.content
 
-    def summarize(self, items, context=""):
-        from .prompts import summarize
-        prompt = summarize(items, context)
-        return self.generator(prompt)

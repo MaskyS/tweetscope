@@ -26,20 +26,6 @@
     }
   },
   {
-    "provider": "mistralai",
-    "name": "mistral-embed",
-    "id": "mistralai-mistral-embed",
-    "params": {}
-  },
-  {
-    "provider": "cohereai",
-    "name": "embed-english-v3.0",
-    "id": "cohereai-embed-english-v3.0",
-    "params": {
-      "input_type": "clustering"
-    }
-  },
-  {
     "provider": "voyageai",
     "name": "voyage-2",
     "id": "voyageai-voyage-2",

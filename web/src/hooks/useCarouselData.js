@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useScope } from '@/contexts/ScopeContext';
-import { queryClient } from '@/api/queryClient';
+import { queryClient } from '@/lib/apiService';
 
 const ROWS_PER_PAGE = 30;
 const PREFETCH_RANGE = 2; // Fetch columns within focusedIndex +/- this range

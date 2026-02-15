@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { ArrowLeft, Quote } from 'lucide-react';
-import { graphClient } from '../../../../api/graphClient';
-import { queryClient } from '../../../../api/queryClient';
+import { graphClient, queryClient } from '../../../../lib/apiService';
 import ThreadNode from './ThreadNode';
 import styles from './ThreadView.module.scss';
 
