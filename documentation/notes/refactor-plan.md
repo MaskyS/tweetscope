@@ -82,11 +82,12 @@ Resolved:
 - Graph endpoints (`/links/*`) now read from LanceDB via `graphRepo.ts` repository abstraction. No in-memory parquet cache.
 - Flask graph endpoints (thread, quotes, edges, node-stats) removed from `datasets.py`; Flask `datasets_bp` + `search_bp` registered only in studio mode.
 - `views.ts` bootstrap tries LanceDB first, falls back to `scope-input.parquet`.
+- Legacy TS API proxy mode removed: `DATA_URL` ending with `/api` is no longer supported (fail-fast at startup).
 
 Remaining:
-- Endpoint-local proxy fallback chains (`isApiDataUrl()` → `proxyDataApi()`) still present in every route module. Must be removed at hard cutover.
 - Cluster/tree bootstrap still reads scope JSON artifacts (not yet in LanceDB `cluster_nodes` table).
-- `dataShared.ts` (504 LOC) still contains file-loading plumbing; dead graph helpers removed but file I/O, caching, proxy functions remain.
+- Views bootstrap still falls back to `scope-input.parquet` as a file-based checkpoint.
+- `dataShared` utilities are decomposed into explicit modules, but storage policy still spans local files (`LATENT_SCOPE_DATA`) vs remote file-base fetch (`DATA_URL`).
 
 ## 3.4 Progressive import gaps
 
@@ -104,13 +105,13 @@ This baseline focuses on what makes engineering work hard: mental branching, hid
 
 ### Baseline A: One file owns too many bounded contexts — RESOLVED
 
-`api/src/routes/data.ts` was a 1,241-line monolith. Now split into domain modules: `catalog.ts` (141), `views.ts` (173), `graph.ts` (174), `query.ts` (202), `dataShared.ts` (504). `data.ts` is a 25-line thin router. New `graphRepo.ts` (222 LOC) provides repository-pattern LanceDB access for graph domain.
+`api/src/routes/data.ts` was a 1,241-line monolith. Now split into domain modules: `catalog.ts` (141), `views.ts` (173), `graph.ts` (174), `query.ts` (202), plus `dataShared.ts` (barrel) + `routes/dataShared/*` (modules). `data.ts` is a 25-line thin router. New `graphRepo.ts` (222 LOC) provides repository-pattern LanceDB access for graph domain.
 
-`dataShared.ts` reduced from 561 → 504 LOC after removing graph-related helpers (`getEdges`, `getNodeStatsRows`, `getLinksMeta` and their caches). Remaining contents: file I/O, caching, proxy fallback, SQL helpers, contract validation — all shared across route modules.
+`dataShared` is decomposed into focused modules (`env`, `paths`, `storage`, `contracts`, `sql`, `transforms`) with a stable re-export surface (`dataShared.ts`) for route consumers.
 
 ### Baseline B: Per-request mode branching is high — PARTIALLY RESOLVED
 
-The monolith split distributes mode branching across domain modules. Mode branching still exists within each module (proxy fallback, DATA_DIR checks) but is now scoped to one product domain per file.
+The monolith split distributes mode branching across domain modules. The TS API no longer has an `/api` upstream proxy mode; remaining branching is primarily local files (`LATENT_SCOPE_DATA`) vs remote file-base fetch (`DATA_URL`), plus `views.ts` parquet fallback vs LanceDB.
 
 ### Baseline C: Contract multiplicity and translation churn — PARTIALLY RESOLVED
 
@@ -142,7 +143,7 @@ Resolved:
 
 Remaining:
 - `scope()` in `latentscope/scripts/scope.py` (454 LOC) still performs metadata assembly, label-tree transformation, parquet generation, contract validation, and Lance export in one orchestration path.
-- `jobs.py` has 25 write routes (including toponymy and upload_dataset) and 51+ command-construction fragments, mixing policy, request parsing, shell command assembly, and process supervision.
+- Jobs write API is now decomposed into focused modules (routes/store/runner/delete helpers) and job execution is hardened (argv execution, safe deletes), but write orchestration still runs in-process via threads (not a dedicated worker/service).
 
 Why this matters:
 - Hard to test stages independently.
@@ -230,7 +231,7 @@ Browser
       -> scope JSON + scope-input.parquet (CDN/local files)
       -> links/*.parquet (full edge cache in API process)
       -> LanceDB table (only some routes: /indexed, /query, /column-filter, /search)
-      -> legacy proxy branch (DATA_URL ending /api) for many endpoints
+      -> legacy proxy mode (DATA_URL ending /api) for many endpoints (removed 2026-02-15)
 
 Result:
 - one request surface backed by mixed storage contracts
@@ -244,14 +245,11 @@ Result:
 Browser
   -> TS API (domain modules: catalog/views/graph/query)
       -> graph.ts → graphRepo.ts → LanceDB local tables ({dataset}__edges, __node_stats)
-         fallback: proxy to DATA_URL if Lance fails
+         fallback: none (404 if links graph not present)
       -> views.ts → LanceDB scope table (via lancedb_table_id)
          fallback: scope-input.parquet from disk/CDN
-         fallback: proxy to DATA_URL
       -> query.ts → LanceDB Cloud (vector search, filters)
-         fallback: proxy to DATA_URL
-      -> catalog.ts → scope JSON + meta JSON from disk/CDN
-         fallback: proxy to DATA_URL
+      -> catalog.ts → scope JSON + meta JSON from disk/CDN (local files or DATA_URL file-base fetch)
   -> Flask (studio mode only)
       -> datasets_bp: scope parquet, cluster labels, embeddings list
       -> search_bp: vector search (studio only)
@@ -260,7 +258,7 @@ Browser
 Result:
 - graph domain fully on LanceDB (primary path)
 - views bootstrap LanceDB-first with file fallback
-- proxy fallback chains still present everywhere (must remove at cutover)
+- no legacy API proxy mode in the TS API
 - Flask no longer serves graph data; datasets_bp + search_bp gated to studio mode
 ```
 
@@ -358,10 +356,10 @@ Key implementation reality (before):
 User Browser
   -> Vercel `web-demo` / `web-app` (React/Vite static app)
       -> Vercel `api-demo` / `api-app` (Hono domain modules)
-          catalog.ts  -> scope JSON + meta from disk/CDN; proxy fallback
-          views.ts    -> LanceDB scope table (primary); parquet fallback; proxy fallback
-          graph.ts    -> graphRepo.ts -> LanceDB local tables (primary); proxy fallback
-          query.ts    -> LanceDB Cloud (vector search, filters); proxy fallback
+          catalog.ts  -> scope JSON + meta from disk/CDN (local files or DATA_URL file-base fetch)
+          views.ts    -> LanceDB scope table (primary); parquet fallback (file-based checkpoint)
+          graph.ts    -> graphRepo.ts -> LanceDB local tables (primary)
+          query.ts    -> LanceDB Cloud (vector search, filters)
           -> optional local DATA_DIR (LATENT_SCOPE_DATA) for LanceDB local tables
 
 Write/build path:
@@ -372,9 +370,9 @@ Write/build path:
 
 Key implementation reality (current):
 - graph domain fully on LanceDB (no parquet edge cache in API process)
-- views bootstrap LanceDB-first but still carries file + proxy fallback chains
+- views bootstrap LanceDB-first but still carries file-based checkpoints (`scope-input.parquet`)
 - Flask graph endpoints deleted; Flask read blueprints gated to studio mode
-- proxy fallback chains still wired in every TS route module (must remove at cutover)
+- no legacy API proxy mode in the TS API (`DATA_URL` ending `/api` rejected at startup)
 
 ### 3.7.6 Deployment stack topology (after hard cutover)
 
@@ -477,12 +475,11 @@ What to keep:
 What changed (2026-02-15):
 - `build_links_graph.py` now writes to both parquet AND LanceDB tables (`{dataset}__edges`, `{dataset}__node_stats`)
 - `graphRepo.ts` reads exclusively from LanceDB tables — no parquet reads in the graph serving path
-- `graph.ts` routes use `graphRepo` as primary; proxy fallback is the only non-Lance path
+- `graph.ts` routes use `graphRepo` as the only runtime data path (no legacy proxy fallback)
 - Flask graph endpoints removed from `datasets.py`; `datasets_bp` is studio-only
 - Parquet artifacts are now write-only from the graph build step; no runtime consumer in the TS API
 
 Remaining removal gate:
-- remove proxy fallback in `graph.ts` (last non-Lance path)
 - correctness + latency benchmarks on Lance-only path (section 10.5.1)
 
 ### Fence D: Flat file lineage (`embeddings/`, `umaps/`, `clusters/`, `scopes/`)
@@ -537,7 +534,7 @@ Goal: reduce “how many files I must load in my head” for one product change.
 
 ```text
 api/
-  src/routes/data.ts                # catalog + scope parquet + links + query + files + proxy fallback
+  src/routes/data.ts                # catalog + scope parquet + links + query + files + legacy proxy mode
   src/routes/search.ts              # vector search route, scope/meta coupling
   src/lib/lancedb.ts                # LanceDB helpers
 
@@ -567,10 +564,12 @@ api/                                  # Production serving API (Hono, Vercel)
   src/routes/views.ts                 # points/bootstrap — LanceDB-first, parquet fallback (173 LOC)
   src/routes/graph.ts                 # neighbors/thread/quotes — LanceDB via graphRepo (174 LOC)
   src/routes/query.ts                 # indexed/query/filter/search (202 LOC)
-  src/routes/dataShared.ts            # shared utilities, file I/O, proxy (504 LOC)
+  src/routes/dataShared.ts            # barrel re-export surface
+  src/routes/dataShared/*             # env/paths/storage/contracts/sql/transforms modules
   src/lib/lancedb.ts                  # LanceDB connection + getLocalDb + getGraphTable (115+ LOC)
   src/lib/graphRepo.ts                # NEW: LanceGraphRepo — graph data access layer (222 LOC)
   src/__tests__/graph-parity.test.ts  # NEW: graph contract shape tests (206 LOC)
+  src/__tests__/data-proxy.test.ts    # NEW: asserts proxy mode removed
 
 web/src/                              # React frontend (Vite + Deck.GL, Vercel)
   api/{base,catalog,view,graph,query}Client.ts  # typed domain clients (replaces apiService.js)
@@ -579,7 +578,7 @@ web/src/                              # React frontend (Vite + Deck.GL, Vercel)
 
 latentscope/server/                   # Python studio server (Flask)
   app.py                              # Flask app — datasets_bp + search_bp now studio-only
-  jobs.py                             # import API + job runner (unchanged)
+  jobs.py                             # facade (routes + runner split into modules; hardened job execution)
   datasets.py                         # -295 LOC: graph endpoints deleted, scope parquet + cluster labels remain (studio-only)
 
 latentscope/scripts/                  # Python pipeline scripts
@@ -632,7 +631,7 @@ api/                                    # DONE: domain split + graph repository
   src/routes/views.ts                   #   DONE: LanceDB-first bootstrap (173 LOC)
   src/routes/graph.ts                   #   DONE: LanceDB via graphRepo (174 LOC)
   src/routes/query.ts                   #   DONE: indexed/query/filter/search (202 LOC)
-  src/routes/dataShared.ts              #   DONE: shared utilities (504 LOC) — could decompose further
+  src/routes/dataShared.ts              #   DONE: barrel exports over focused modules
   src/lib/lancedb.ts                    #   DONE: connection + local DB + graph table helpers
   src/lib/graphRepo.ts                  #   DONE: LanceGraphRepo repository (222 LOC)
   src/__tests__/graph-parity.test.ts    #   DONE: contract shape tests (206 LOC)
@@ -1356,7 +1355,7 @@ Implemented:
 
 Remaining:
 - Add `tweet_link` as a separate edge kind for status URLs not captured as quotes.
-- Remove proxy fallback chains in `graph.ts` (last non-Lance path — deferred to cutover).
+- Remove legacy TS API proxy mode (`DATA_URL` ending `/api`). **DONE (2026-02-15)** — proxy routes removed; `DATA_URL=/api` rejected at startup.
 - Graph correctness + latency benchmarks (section 10.5.1).
 
 ### Milestone C: Progressive import core — upsert done, tests remaining
@@ -1398,7 +1397,7 @@ Do not mark this refactor complete until all are true:
 2. ~~Serving modules are split by domain boundary (`catalog`, `views`, `graph`, `query`) with no mixed-domain ownership in one module.~~ **DONE** — `data.ts` split into `catalog.ts`, `views.ts`, `graph.ts`, `query.ts`. Frontend clients split into `web/src/api/` by domain.
 3. ~~Hosted import rejects raw zip by policy at API boundary.~~ **DONE** — `jobs.py` rejects `source_type=zip` with 400; `validate_extracted_archive_payload()` enforces contract on all uploads.
 4. `scope()` orchestration is decomposed and independently testable by stage. *(Partially done: `export_lance` extracted, intermediate parquet eliminated. 454 LOC orchestration remains.)*
-5. ~~Graph endpoints run on LanceDB edges/node-stats as primary data source.~~ **DONE** — `graphRepo.ts` reads from `{dataset}__edges` and `{dataset}__node_stats` LanceDB tables. Flask graph endpoints deleted. *(Proxy fallback chains remain in `graph.ts` — must be removed at hard cutover for criterion 1.)*
+5. ~~Graph endpoints run on LanceDB edges/node-stats as primary data source.~~ **DONE** — `graphRepo.ts` reads from `{dataset}__edges` and `{dataset}__node_stats` LanceDB tables. Flask graph endpoints deleted.
 6. Progressive import tests prove incremental equivalence against full import baselines.
 7. Flat-file artifacts are explicitly classified as either bootstrap/export, not hidden runtime dependencies. *(Partially done: graph parquet is now write-only from build step, no TS API consumer. `scope-input.parquet` still consumed as fallback by `views.ts`.)*
 8. ~~Frontend no longer recomputes core graph semantics as fallback for missing backend contracts.~~ **DONE** — `ScopeContext.jsx` deleted; `useNodeStats.ts` rewritten as strict server-contract consumer.
@@ -1438,7 +1437,7 @@ Net impact: **-35 lines of real code**, -295 lines of Flask graph duplication, g
 ### P2: Pipeline decomposition (next)
 
 3. **Decompose `latentscope/scripts/scope.py`** (454 LOC) — metadata assembly, label-tree transforms, parquet builds, and Lance export in one path. Split into stage modules under `latentscope/pipeline/stages/` (Target E).
-4. **Split `latentscope/server/jobs.py`** — 25 write routes, 51+ command fragments mixing policy, parsing, shell assembly, and process supervision. Split into `api/src/routes/import.ts` + pipeline runner service.
+4. **Split `latentscope/server/jobs.py` (architecture)** — routes/runner have been decomposed and hardened (argv + safe deletes), but moving write orchestration into a dedicated service (`api/src/routes/import.ts` + pipeline runner) remains.
 5. **Split `latentscope/scripts/twitter_import.py`** — import source parsing coupled to full pipeline run. Separate ingest route from stage orchestrator.
 
 ### P3: Validation
@@ -1448,9 +1447,9 @@ Net impact: **-35 lines of real code**, -295 lines of Flask graph duplication, g
 
 ### P4: Hard cutover prerequisites
 
-8. **Remove proxy fallback chains** — strip `isApiDataUrl()` → `proxyDataApi()` blocks from `graph.ts`, `views.ts`, `catalog.ts`, `query.ts`. Dead code: `isApiDataUrl()`, `proxyDataApi()`, `passthrough()` in `dataShared.ts`.
+8. ~~Remove proxy fallback chains~~ — **DONE** — TS API no longer supports `DATA_URL` ending with `/api`; upstream proxy routes removed; `buildFileUrl()` assumes `DATA_URL` is a file base URL.
 9. **Benchmark Lance vs parquet** (section 10.5.1) — p95 latency validation on `sheik-tweets` and `visakanv` datasets.
-10. **Decompose `dataShared.ts`** (504 LOC) — split into `storage.ts`, `contracts.ts`, `query-builders.ts`. Lower priority; acceptable as-is.
+10. ~~Decompose `dataShared.ts`~~ — **DONE** — split into `routes/dataShared/{env,paths,storage,contracts,sql,transforms,types}.ts` with a stable `dataShared.ts` barrel.
 
 ## 15. Lance/LanceDB docs used for constraints
 
