@@ -71,12 +71,14 @@ def _to_int_or_none(value):
 
 def _edge_row_to_json(row):
     return {
-        "edge_type": row.edge_type,
+        "edge_id": row.edge_id,
+        "edge_kind": row.edge_kind,
         "src_tweet_id": row.src_tweet_id,
         "dst_tweet_id": row.dst_tweet_id,
         "src_ls_index": _to_int_or_none(row.src_ls_index),
         "dst_ls_index": _to_int_or_none(row.dst_ls_index),
         "internal_target": bool(row.internal_target),
+        "provenance": row.provenance,
         "source_url": row.source_url,
     }
 
@@ -202,7 +204,7 @@ def get_dataset_links_by_indices(dataset):
 
     payload = request.get_json(silent=True) or {}
     raw_indices = payload.get("indices", [])
-    edge_types = payload.get("edge_types", ["reply", "quote"])
+    edge_kinds = payload.get("edge_kinds", ["reply", "quote"])
     include_external = _parse_bool(payload.get("include_external"), default=False)
     max_edges = payload.get("max_edges", 5000)
 
@@ -213,11 +215,11 @@ def get_dataset_links_by_indices(dataset):
     if max_edges < 1:
         max_edges = 1
 
-    if not isinstance(edge_types, list):
-        edge_types = [edge_types] if edge_types else []
-    edge_types = [str(edge_type).strip().lower() for edge_type in edge_types if str(edge_type).strip()]
-    if edge_types:
-        edges_df = edges_df[edges_df["edge_type"].isin(edge_types)]
+    if not isinstance(edge_kinds, list):
+        edge_kinds = [edge_kinds] if edge_kinds else []
+    edge_kinds = [str(ek).strip().lower() for ek in edge_kinds if str(ek).strip()]
+    if edge_kinds:
+        edges_df = edges_df[edges_df["edge_kind"].isin(edge_kinds)]
 
     if raw_indices is None:
         raw_indices = []
@@ -260,7 +262,7 @@ def get_dataset_links_thread(dataset, tweet_id):
     except FileNotFoundError:
         return jsonify({"error": "Links graph not found for dataset"}), 404
 
-    reply_df = edges_df[edges_df["edge_type"] == "reply"]
+    reply_df = edges_df[edges_df["edge_kind"] == "reply"]
     if reply_df.empty:
         return jsonify({
             "tweet_id": tweet_id,
@@ -348,7 +350,7 @@ def get_dataset_links_quotes(dataset, tweet_id):
     except FileNotFoundError:
         return jsonify({"error": "Links graph not found for dataset"}), 404
 
-    quote_df = edges_df[edges_df["edge_type"] == "quote"]
+    quote_df = edges_df[edges_df["edge_kind"] == "quote"]
     if quote_df.empty:
         return jsonify({
             "tweet_id": tweet_id,

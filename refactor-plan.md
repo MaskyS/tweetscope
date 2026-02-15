@@ -1,6 +1,6 @@
 # Refactor Plan: Twitter Knowledge Explorer
 
-Date: 2026-02-11
+Last updated: 2026-02-11
 
 ## 1. Product Direction (Explicit)
 
@@ -60,17 +60,21 @@ Links are built separately by `build_links_graph` from `input.parquet` and writt
 
 ## 3.2 Link model gaps
 
-Current builder (`latentscope/scripts/build_links_graph.py`) creates directed edges:
+Current builder (`latentscope/scripts/build_links_graph.py`) creates directed edges with `edge_kind` (`reply|quote`), deterministic `edge_id`, and `provenance` (`native_field|url_extract`) annotation.
 
-- reply: `src_tweet_id -> in_reply_to_status_id`
-- quote: `src_tweet_id -> tweet_id parsed from urls_json`
+- reply: `src_tweet_id -> in_reply_to_status_id` (provenance: `native_field`)
+- quote: `src_tweet_id -> quoted_status_id` when present (provenance: `native_field`), falls back to URL parsing of `urls_json` (provenance: `url_extract`). Native field takes precedence via `seen_edges` dedup.
 
-Gaps:
+Remaining gaps:
 
-1. Quote semantics are URL-heuristic and not strongly tweet-native.
-2. UX “bidirectional” exists in API assembly, not data contract.
-3. `ls_index` is mixed into graph artifacts, but `ls_index` is scope/view-specific and unstable across progressive subsets.
-4. No explicit edge provenance/type split for “true quote vs generic tweet link”.
+1. UX "bidirectional" exists in API assembly, not data contract.
+2. `ls_index` is still mixed into graph artifacts. It is scope/view-specific and unstable across progressive subsets. Edge identity uses `edge_id` (tweet-id-based hash) which is stable, but `src_ls_index`/`dst_ls_index` in parquet are still view-coupled.
+
+Resolved:
+
+- Edge provenance is now annotated on every edge (`provenance` column).
+- Edge schema uses `edge_kind` (not `edge_type`) and `edge_id` (deterministic hash) per the target entity model.
+- Browser extractor passes `quoted_status_id_str` and `conversation_id_str` through all three layers (JS extractor → Python flattener → edge builder). Native-field quote edges are now produced.
 
 ## 3.3 Serving model gaps
 
@@ -81,64 +85,47 @@ Gaps:
 
 ## 3.4 Progressive import gaps
 
-- `--year` exists as a filter in import, but creates isolated dataset runs rather than first-class incremental state.
-- No explicit notion of `dataset_version` or incremental merge/upsert semantics across import passes.
+`twitter_import.py` now has `_upsert_import_rows()` which merges incoming rows into existing `input.parquet` by `id`, assigns stable `ls_index` values for new rows, and writes per-batch manifests to `imports/{batch_id}.json`. `build_links_graph.py` supports `--incremental` mode that recomputes only edges for changed tweet IDs.
+
+Remaining gaps:
+
+- Upsert still rewrites the full `input.parquet` on every import (O(n) file write, not O(delta)). This is the expected transitional state until LanceDB `merge_insert` replaces parquet as the record store.
+- No explicit `dataset_version` — batch manifests track lineage, but there is no single version counter.
+- Incremental import tests do not exist yet.
 
 ## 3.5 Cognitive complexity baseline (actual organization, 2026-02-11)
 
 This baseline focuses on what makes engineering work hard: mental branching, hidden coupling, and policy spread.
 
-### Baseline A: One file owns too many bounded contexts
+### Baseline A: One file owns too many bounded contexts — RESOLVED
 
-`api/src/routes/data.ts` currently owns all of these at once:
+`api/src/routes/data.ts` was a 1,241-line monolith. Now split into domain modules: `catalog.ts` (141), `views.ts` (139), `graph.ts` (245), `query.ts` (202), `dataShared.ts` (561). `data.ts` is a 25-line thin router.
 
-1. dataset/scope catalog reads
-2. scope parquet bootstrap reads
-3. links graph APIs (including thread/quote traversal)
-4. LanceDB row/query/filter APIs
-5. static file passthrough
-6. legacy API proxy behavior
+Remaining concern: `dataShared.ts` at 561 LOC is the new largest file and may need further decomposition into repository/service layers.
 
-Why this matters:
-- A single change risks unrelated behavior.
-- On-call/debug requires loading multiple domain models into one mental frame.
+### Baseline B: Per-request mode branching is high — PARTIALLY RESOLVED
 
-### Baseline B: Per-request mode branching is high
+The monolith split distributes mode branching across domain modules. Mode branching still exists within each module (proxy fallback, DATA_DIR checks) but is now scoped to one product domain per file.
 
-In `api/src/routes/data.ts`:
-
-- `if (isApiDataUrl())` appears 16 times as direct checks
-- `if (DATA_DIR)` local-first fallback checks appear 9 times
-- `proxyDataApi()` calls appear 18 times
-- Total mode-branching instances: **33+** across a single 1,241-line file
-
-Why this matters:
-- To reason about one endpoint, you must reason about deployment mode and fallback path simultaneously.
-- Failures can present differently across local/demo/hosted paths with the same request.
-
-### Baseline C: Contract multiplicity and translation churn
+### Baseline C: Contract multiplicity and translation churn — PARTIALLY RESOLVED
 
 Identity and graph fields are translated in multiple layers:
 
 - `scope.py` builds `ls_index` into scope artifacts (`latentscope/scripts/scope.py`)
 - links artifacts store both tweet ids and scope indices (`latentscope/scripts/build_links_graph.py`)
-- API re-normalizes index fields (`api/src/routes/data.ts`)
-- frontend re-normalizes again and sometimes recomputes stats (`web/src/hooks/useNodeStats.js`)
+- API re-normalizes index fields (now across domain modules in `api/src/routes/`)
 
-Why this matters:
-- Semantic bugs hide in conversion boundaries, not single functions.
-- Progressive import is harder because `ls_index` is view-relative but appears in quasi-global contracts.
+Frontend translation layer reduced: `ScopeContext.jsx` deleted, `useNodeStats.ts` rewritten as strict server-contract consumer (98 LOC, no client-side graph recompute). `apiService.js` replaced by typed domain clients.
 
-### Baseline D: Policy logic is split across UI + backend
+Remaining: pipeline-side `ls_index` multiplicity still exists (scope.py, build_links_graph.py). Resolves with LanceDB identity unification (Milestone D).
 
-Privacy behavior is currently controlled by both:
+### Baseline D: Policy logic is split across UI + backend — RESOLVED
 
-- frontend toggle deciding `source_type=community_json` vs `source_type=zip` (`web/src/components/Home.jsx`)
-- backend import endpoint accepting both source types (`latentscope/server/jobs.py`)
+Privacy is now enforced at the server boundary:
 
-Why this matters:
-- Security/privacy invariants are not enforced at one authoritative boundary.
-- Hosted-mode guarantees depend on client behavior.
+- `jobs.py` rejects `source_type=zip` with HTTP 400 unconditionally.
+- `jobs.py` validates all `community_json` uploads with `validate_extracted_archive_payload()` (strict `archive_format`, field presence, count consistency).
+- `Home.jsx` always extracts in-browser; the privacy toggle is removed. The frontend cannot weaken the server-side policy.
 
 ### Baseline E: Orchestration and side effects are tightly coupled
 
@@ -478,15 +465,15 @@ latentscope/server/
   datasets.py/search.py/tags.py     # legacy serving/admin endpoints
 
 latentscope/scripts/
-  twitter_import.py                 # source parsing + filters + full pipeline orchestrator
+  twitter_import.py                 # source parsing + filters + upsert/merge + pipeline orchestrator
   scope.py                          # scope metadata + label transforms + parquet builds + export_lance
-  build_links_graph.py              # reply/quote extraction + node stats artifacts
+  build_links_graph.py              # edge_kind/provenance/edge_id extraction + incremental rebuild + node stats
 
 web/src/
   lib/apiService.js                 # all API calls (mixed old/new domains + external model APIs)
   contexts/ScopeContext.jsx         # bootstrap + cluster stats mutation + hierarchy build
   hooks/useNodeStats.js             # endpoint read + edge-derived fallback recomputation
-  components/Home.jsx               # privacy toggle + source_type branching + upload behavior
+  components/Home.jsx               # browser-only extract + upload (zip rejection is server-enforced)
 ```
 
 ### 3.9.2 Why this is cognitively expensive
@@ -509,72 +496,75 @@ Typical feature edits currently cross too many unrelated concerns:
 
 This is exactly the kind of distributed coupling that drives cognitive complexity and regression risk.
 
-### 3.9.3 Target file map (after hard cutover)
+### 3.9.3 Target file map (current state → remaining target)
 
 ```text
-api/
-  src/routes/catalog.ts             # datasets/views metadata only
-  src/routes/views.ts               # points/cluster-tree/bootstrap pages
-  src/routes/graph.ts               # neighbors/thread/quotes only
-  src/routes/query.ts               # indexed/query/filter/search only
-  src/routes/import.ts              # extracted payload ingest entry
-  src/repositories/lance/*.ts       # table-specific access (records/edges/views)
-  src/services/ingest/*.ts          # payload validation, batch orchestration
-  src/contracts/*.ts                # request/response + schema contracts
-  src/lib/lancedb.ts                # connection/index helpers (kept, narrowed)
+api/                                    # DONE: domain split
+  src/routes/data.ts                    #   thin router (25 LOC)
+  src/routes/catalog.ts                 #   datasets/views metadata (141 LOC)
+  src/routes/views.ts                   #   points/cluster-tree/bootstrap (139 LOC)
+  src/routes/graph.ts                   #   neighbors/thread/quotes (245 LOC)
+  src/routes/query.ts                   #   indexed/query/filter/search (202 LOC)
+  src/routes/dataShared.ts              #   shared utilities (561 LOC) — review for decomposition
+  src/routes/import.ts                  # TODO: extracted payload ingest entry
+  src/repositories/lance/*.ts           # TODO: table-specific access (records/edges/views)
+  src/contracts/*.ts                    # TODO: request/response + schema contracts
+  src/lib/lancedb.ts                    #   connection/index helpers (kept)
 
-latentscope/pipeline/               # (new package boundary for stage code)
+latentscope/pipeline/                   # TODO: new package boundary for stage code
   stages/normalize.py
   stages/upsert_records.py
   stages/upsert_edges.py
   stages/embed_delta.py
   stages/recompute_node_stats.py
   stages/build_view.py
-  io/export_bundle.py               # optional parquet/json exports only
+  io/export_bundle.py                   #   optional parquet/json exports only
 
-web/src/
-  api/catalogClient.js
-  api/viewClient.js
-  api/graphClient.js
-  api/queryClient.js
-  contexts/ScopeRuntimeContext.jsx  # state assembly only, no contract mutation
-  hooks/useNodeStats.js             # server-contract only (no graph recompute fallback)
-  components/Home.jsx               # extracted-json-only upload path for hosted mode
+web/src/                                # DONE: domain clients + context cleanup
+  api/baseClient.ts                     #   base URL + shared fetch (23 LOC)
+  api/catalogClient.ts                  #   catalog domain (76 LOC)
+  api/viewClient.ts                     #   view domain (25 LOC)
+  api/graphClient.ts                    #   graph domain (34 LOC)
+  api/queryClient.ts                    #   query domain (132 LOC)
+  api/types.ts                          #   shared types
+  hooks/useNodeStats.ts                 #   server-contract only (98 LOC)
+  components/Home.jsx                   #   extracted-json-only upload path for hosted mode
 ```
 
 ### 3.9.4 File action matrix (keep/rewrite/new/delete)
 
-| File | Action | Reason | Replacement / target owner |
-|---|---|---|---|
-| `api/src/routes/data.ts` | Rewrite then delete monolith | mixed bounded contexts + fallback branching | split into `catalog.ts`, `views.ts`, `graph.ts`, `query.ts` |
-| `api/src/routes/search.ts` | Merge/rewrite | overlaps query/search contract logic | `query.ts` + query service layer |
-| `api/src/lib/lancedb.ts` | Keep + narrow | useful shared DB adapter | table-repository usage only |
-| `latentscope/server/app.py` | Remove from hosted runtime | legacy Flask serving composition | TS API as sole serving layer |
-| `latentscope/server/datasets.py` | Delete or studio-only | legacy read endpoints | `api/src/routes/catalog.ts` |
-| `latentscope/server/search.py` | Delete or studio-only | legacy search path | `api/src/routes/query.ts` |
-| `latentscope/server/jobs.py` | Rewrite/split | policy + orchestration + command assembly coupled | `api/src/routes/import.ts` + pipeline runner service |
-| `latentscope/scripts/scope.py` | Decompose | many side effects in one path | stage modules under `latentscope/pipeline/stages/` |
-| `latentscope/scripts/build_links_graph.py` | Replace runtime role | file artifact builder only | `upsert_edges.py` + `recompute_node_stats.py` |
-| `latentscope/scripts/twitter_import.py` | Split responsibilities | import source parsing coupled to full pipeline run | ingest route + stage orchestrator |
-| `web/src/lib/apiService.js` | Split | one mega-client for unrelated domains | `api/*Client.js` by bounded context |
-| `web/src/contexts/ScopeContext.jsx` | Rewrite | bootstrapping + mutation + aggregation mixed | `ScopeRuntimeContext.jsx` (declarative state assembly) |
-| `web/src/hooks/useNodeStats.js` | Rewrite | recomputes semantics client-side | strict server-contract consumer |
-| `web/src/components/Home.jsx` | Rewrite branch logic | UI toggle currently controls privacy invariant | hosted path enforces extracted-only source |
-| `api/src/routes/resolve-url.ts` | Keep | URL resolution is domain-independent utility (62 LOC, 2 handlers) | stays as-is or moves to shared service |
-| `api/src/lib/voyageai.ts` | Keep | embedding client used by search | stays, used by `query.ts` |
-| `latentscope/server/admin.py` | Studio-only | admin routes for local dev (353 LOC, 2 routes) | not exposed in hosted runtime |
-| `latentscope/server/bulk.py` | Studio-only | bulk operations (174 LOC, 4 routes) | not exposed in hosted runtime |
-| `latentscope/server/models.py` | Studio-only | model listing/config (102 LOC, 7 routes) | not exposed in hosted runtime |
-| `latentscope/server/tags.py` | Studio-only | user tags on rows (237 LOC, 7 routes) | not exposed in hosted runtime; tags could become Lance column later |
-| `web/src/hooks/useThreadData.js` | Rewrite | currently couples to links parquet API shape | strict `graph.ts` consumer |
-| `web/src/hooks/useCarouselData.js` | Keep + adapt | independent per-column data fetching | update to use `viewClient.js` instead of `apiService.js` |
-| `web/src/components/Explore/V2/DeckGLScatter.jsx` | Keep + adapt | core scatter plot renderer | update data contract to match new `view_points` shape |
-| `web/src/components/Explore/V2/Carousel/FeedCarousel.jsx` | Keep + adapt | carousel composition layer | update data fetching to new API clients |
-| `web/src/contexts/FilterContext.jsx` | Rewrite | manages 5 filter types, tightly coupled to scope shape | adapt to view-based contracts |
-| `web/src/lib/twitterArchiveParser.js` | Keep | client-side ZIP extraction, privacy boundary | add `quoted_status_id_str`/`conversation_id_str` extraction per Section 5.1 |
-| `latentscope/scripts/toponymy_labels.py` | Keep | cluster labeling with audit loop | called by `build_view` stage |
-| `latentscope/scripts/cluster.py` | Keep | clustering logic | called by `build_view` stage |
-| `latentscope/scripts/embed.py` | Keep + adapt | embedding logic | called by `embed_delta` stage; adapt for incremental-only embedding |
+| File | Status | Notes |
+|---|---|---|
+| `api/src/routes/data.ts` | **DONE** — thin router (25 LOC) | Split into `catalog.ts` (141), `views.ts` (139), `graph.ts` (245), `query.ts` (202), `dataShared.ts` (561) |
+| `api/src/routes/search.ts` | Merge into `query.ts` | Overlaps query/search contract logic |
+| `api/src/routes/dataShared.ts` | **NEW** — needs review | 561 LOC shared utilities; may need further decomposition |
+| `api/src/lib/lancedb.ts` | Keep + narrow | Useful shared DB adapter |
+| `latentscope/server/app.py` | Remove from hosted runtime | Legacy Flask serving composition |
+| `latentscope/server/datasets.py` | Delete or studio-only | Legacy read endpoints → `catalog.ts` |
+| `latentscope/server/search.py` | Delete or studio-only | Legacy search path → `query.ts` |
+| `latentscope/server/jobs.py` | Rewrite/split | Policy + orchestration + command assembly coupled → `import.ts` + pipeline runner |
+| `latentscope/scripts/scope.py` | Decompose | Many side effects in one path → stage modules under `latentscope/pipeline/stages/` |
+| `latentscope/scripts/build_links_graph.py` | Replace runtime role | File artifact builder only → `upsert_edges.py` + `recompute_node_stats.py` |
+| `latentscope/scripts/twitter_import.py` | Split responsibilities | Import source parsing coupled to full pipeline run → ingest route + stage orchestrator |
+| `web/src/lib/apiService.js` | **DONE** — deleted | Replaced by `web/src/api/{base,catalog,view,graph,query}Client.ts`; thin `.ts` re-export for legacy consumers |
+| `web/src/contexts/ScopeContext.jsx` | **DONE** — deleted | Bootstrap/mutation/aggregation removed; consumers updated |
+| `web/src/hooks/useNodeStats.js` | **DONE** — rewritten as `.ts` (98 LOC) | Was 201 LOC with client-side graph recompute; now strict server-contract consumer |
+| `web/src/components/Home.jsx` | Rewrite branch logic | Hosted path enforces extracted-only source |
+| `api/src/routes/resolve-url.ts` | Keep | URL resolution utility (62 LOC) |
+| `api/src/lib/voyageai.ts` | Keep | Embedding client used by `query.ts` |
+| `latentscope/server/admin.py` | Studio-only | Admin routes for local dev (353 LOC) |
+| `latentscope/server/bulk.py` | Studio-only | Bulk operations (174 LOC) |
+| `latentscope/server/models.py` | Studio-only | Model listing/config (102 LOC) |
+| `latentscope/server/tags.py` | Studio-only | User tags (237 LOC); tags could become Lance column later |
+| `web/src/hooks/useThreadData.js` | Rewrite | Currently couples to links parquet API shape → strict `graph.ts` consumer |
+| `web/src/hooks/useCarouselData.js` | Keep + adapt | Updated to use domain clients |
+| `web/src/components/Explore/V2/DeckGLScatter.jsx` | Keep + adapt | Update data contract to match `view_points` shape |
+| `web/src/components/Explore/V2/Carousel/FeedCarousel.jsx` | Keep + adapt | Update data fetching to new API clients |
+| `web/src/contexts/FilterContext.jsx` | Rewrite | 5 filter types tightly coupled to scope shape → adapt to view-based contracts |
+| `web/src/lib/twitterArchiveParser.js` | **DONE** | `quoted_status_id_str`/`conversation_id_str` extraction added |
+| `latentscope/scripts/toponymy_labels.py` | Keep | Cluster labeling with audit loop |
+| `latentscope/scripts/cluster.py` | Keep | Clustering logic |
+| `latentscope/scripts/embed.py` | Keep + adapt | Adapt for incremental-only embedding |
 
 ### 3.9.5 Deletion policy (important)
 
@@ -643,18 +633,28 @@ Note: `record_id` BTREE index is mandatory — `merge_insert` joins on this key,
 
 Graph relationships independent of view coordinates.
 
-Columns:
+The parquet implementation (`links/edges.parquet`) already uses the target column names and schema version `links-v2`. The LanceDB table will mirror this schema with added `dataset_id` and `import_batch_id` columns.
+
+Current parquet columns (implemented):
+
+- `edge_id` (deterministic SHA-256 hash of `src|dst|kind|provenance`, first 16 hex chars)
+- `edge_kind` (`reply|quote`)
+- `src_tweet_id`, `dst_tweet_id`
+- `src_ls_index`, `dst_ls_index` (nullable)
+- `internal_target` (bool)
+- `provenance` (`native_field|url_extract`)
+- `source_url` (nullable)
+
+Gotcha: the current `edge_id` hash does NOT include `dataset_id` because edges are per-dataset parquet files. When edges move to a shared LanceDB table, `dataset_id` must be added to the hash to ensure cross-dataset uniqueness.
+
+Target LanceDB columns (adds to the above):
 
 - `dataset_id`
-- `edge_id` (deterministic hash of `dataset_id + src + dst + kind + provenance`)
-- `src_record_id`
-- `dst_record_id`
-- `edge_kind` (`reply|quote|tweet_link|mention_link`)
-- `direction` (`forward`)  
+- `src_record_id` (renamed from `src_tweet_id` for generality)
+- `dst_record_id` (renamed from `dst_tweet_id`)
+- `edge_kind` expands to (`reply|quote|tweet_link|mention_link`)
+- `direction` (`forward`)
   Note: bidirectional traversal comes from querying incoming and outgoing edges; do not duplicate rows unless needed for performance.
-- `is_internal_target` (bool)
-- `source_url` (nullable)
-- `provenance` (`native_field|url_extract|inferred`)
 - `import_batch_id`
 
 Indexes:
@@ -788,23 +788,21 @@ Extend browser-minimized payload with explicit link semantics (still privacy-saf
 
 For tweets/note tweets include if present:
 
-- `in_reply_to_status_id_str`
-- `quoted_status_id_str`
-- `conversation_id_str`
-- `entities.urls[]` (expanded)
-
-This allows deterministic quote/reply edges without over-reliance on URL parsing.
+- `in_reply_to_status_id_str` — extracted by `twitterArchiveParser.js`
+- `quoted_status_id_str` — extracted by `twitterArchiveParser.js`, flattened to `quoted_status_id` column in `input.parquet`
+- `conversation_id_str` — extracted by `twitterArchiveParser.js`, flattened to `conversation_id` column in `input.parquet` (stored for future thread-root discovery, no edge-builder consumer yet)
+- `entities.urls[]` (expanded) — extracted
 
 ## 5.2 Edge classification
 
-Build edge kinds with strict precedence:
+Edge kinds with strict precedence:
 
-1. `reply`: from reply field.
-2. `quote`: from explicit quote field.
-3. `tweet_link`: status URLs in text/entities not already captured as quote.
+1. `reply`: from `in_reply_to_status_id` field → `provenance: native_field`. Implemented.
+2. `quote`: from `quoted_status_id` field → `provenance: native_field`. Implemented. Falls back to URL parsing → `provenance: url_extract` when native field is absent. Native field takes precedence via `seen_edges` dedup in `_build_edges_for_sources()`.
+3. `tweet_link`: status URLs in text/entities not already captured as quote. Not yet implemented as a separate edge kind.
 4. optional `mention_link`: user mentions (future; lower priority).
 
-Provenance annotation required on every edge.
+Provenance annotation is implemented on every edge (`provenance` column in `links/edges.parquet`).
 
 ## 5.3 Bidirectional UX without duplicate storage
 
@@ -1061,10 +1059,11 @@ Why before, not during:
 - A pure rename PR is easy to review, easy to revert, and eliminates one axis of cognitive overhead from all subsequent work.
 - The rename itself has zero semantic risk — it changes names, not behavior.
 
-## 8.1 Build v2 contracts first (no dual runtime)
+## 8.1 Build v2 contracts first (no dual runtime) — DONE
 
-- Add extracted payload schema versioning + strict validation.
-- Enforce hosted raw-zip rejection server-side.
+- Extracted payload schema versioning: `archive_format: x_native_extracted_v1` enforced by `validate_extracted_archive_payload()`.
+- Hosted raw-zip rejection: `jobs.py` returns 400 for `source_type=zip`.
+- Edge schema: `links-v2` with `edge_kind`, `edge_id`, `provenance` columns.
 
 ## 8.2 Build v2 serving on LanceDB as sole source
 
@@ -1087,8 +1086,8 @@ Why before, not during:
 ## 8.5 Decommission legacy paths
 
 - Remove legacy `scope-input.parquet` and `links/*.parquet` runtime reads from API.
-- Remove hosted raw zip path (`source_type=zip`) from server-side import endpoint.
-- Remove dead frontend toggles/branches that exist only for legacy ingestion path.
+- ~~Remove hosted raw zip path (`source_type=zip`) from server-side import endpoint.~~ **DONE.**
+- ~~Remove dead frontend toggles/branches that exist only for legacy ingestion path.~~ **DONE** (`processArchiveLocally` toggle removed).
 
 ## 8.6 Progressive import as first-class
 
@@ -1185,23 +1184,41 @@ Accept cutover only if Lance path meets p95 targets and has lower tail variance 
 
 ## 12. Implementation Milestones (Execution-Ready)
 
-### Milestone A: Privacy + contracts (1 week)
+### Milestone A: Privacy + contracts — DONE except tests
 
-- Add extracted payload JSON schema and validator.
-- Enforce `hosted => source_type != zip` in API.
-- Add tests for acceptance/rejection paths.
+Implemented:
+- Strict extracted payload validator (`validate_extracted_archive_payload` with `archive_format: x_native_extracted_v1`, field presence, count consistency).
+- Server-side zip rejection (`jobs.py` returns 400 for `source_type=zip`).
+- Frontend privacy toggle removed; always extracts in-browser.
 
-### Milestone B: Link model v2 (1-2 weeks)
+Remaining:
+- **Tests for acceptance/rejection paths.** The validator and zip rejection have zero test coverage. This is the top priority remaining item.
 
-- Extend extractor for `quoted_status_id_str` and `conversation_id_str`.
-- Build edge classifier (`reply|quote|tweet_link`) with provenance.
-- Write edges + node stats to LanceDB tables.
+### Milestone B: Link model v2 — schema + native-field quotes done, LanceDB remaining
+
+Implemented:
+- Edge schema: `edge_kind`, `edge_id` (deterministic hash), `provenance` columns. Schema version `links-v2`.
+- Edge builder decomposed into single-responsibility functions (`_build_edges_for_sources`, `_refresh_edge_targets`, `_build_node_stats_df`, `_canonicalize_edges_df`).
+- Incremental edge rebuild (`--incremental` + `--changed_tweet_id` flags).
+- Browser extractor passes `quoted_status_id_str` and `conversation_id_str` through JS extractor → Python flattener → `input.parquet`.
+- Native-field quote edges (`provenance: native_field`) produced by edge builder with precedence over URL-extracted quotes.
+
+Remaining:
+- Add `tweet_link` as a separate edge kind for status URLs not captured as quotes.
+- Write edges + node stats to LanceDB tables (currently parquet-only).
 - Switch `/links/*` endpoints to Lance-only read.
 
-### Milestone C: Progressive import core (1 week)
+### Milestone C: Progressive import core — upsert done, tests remaining
 
-- Add `import_batch_id` and deterministic upsert flow (`records`, `edges`).
-- Add incremental import tests (year-by-year).
+Implemented:
+- `_upsert_import_rows()` with id-based merge, stable `ls_index` assignment, per-batch manifests.
+- `import_batch_id` threading through `twitter_import.py` and `jobs.py`.
+- Incremental links rebuild wired into the import flow.
+
+Remaining:
+- **Incremental import tests (year-by-year).** No test coverage exists.
+
+Gotcha: upsert currently rewrites full `input.parquet` on every import. This is O(n) for the write step — acceptable for now but must be replaced by LanceDB `merge_insert` in Milestone D.
 
 ### Milestone D: View tables + serving pivot (2 weeks)
 
@@ -1220,23 +1237,41 @@ Accept cutover only if Lance path meets p95 targets and has lower tail variance 
 Do not mark this refactor complete until all are true:
 
 1. Each production endpoint has one authoritative data-source decision and no endpoint-local legacy proxy fallback chain.
-2. Serving modules are split by domain boundary (`catalog`, `views`, `graph`, `query`) with no mixed-domain ownership in one module.
-3. Hosted import rejects raw zip by policy at API boundary.
+2. ~~Serving modules are split by domain boundary (`catalog`, `views`, `graph`, `query`) with no mixed-domain ownership in one module.~~ **DONE** — `data.ts` split into `catalog.ts`, `views.ts`, `graph.ts`, `query.ts`. Frontend clients split into `web/src/api/` by domain.
+3. ~~Hosted import rejects raw zip by policy at API boundary.~~ **DONE** — `jobs.py` rejects `source_type=zip` with 400; `validate_extracted_archive_payload()` enforces contract on all uploads.
 4. `scope()` orchestration is decomposed and independently testable by stage.
 5. Graph endpoints run on LanceDB edges/node-stats in production with no flat-file fallback path.
 6. Progressive import tests prove incremental equivalence against full import baselines.
 7. Flat-file artifacts are explicitly classified as either bootstrap/export, not hidden runtime dependencies.
-8. Frontend no longer recomputes core graph semantics as fallback for missing backend contracts.
+8. ~~Frontend no longer recomputes core graph semantics as fallback for missing backend contracts.~~ **DONE** — `ScopeContext.jsx` deleted; `useNodeStats.ts` rewritten as strict server-contract consumer.
 
-## 14. Immediate Next Step
+## 14. Immediate Next Steps
 
-Implement Milestone A first before any deeper architecture work:
+### P0: Structural prerequisites
 
-1. strict extracted payload schema,
-2. hosted raw zip rejection,
-3. tests.
+1. **Scope → View rename** (Section 8.0) — pure terminology rename across frontend, API, and pipeline. Must happen before further structural refactoring.
+2. **Tests for Milestone A** — validator acceptance/rejection, zip rejection endpoint, extracted payload round-trip. Contract gate with zero coverage.
 
-This hardens privacy and gives a stable contract for all downstream refactors.
+### P1: File refactoring — DONE
+
+All four P1 targets completed (in working tree, not yet committed):
+
+- ~~Split `api/src/routes/data.ts`~~ → `catalog.ts`, `views.ts`, `graph.ts`, `query.ts`, `dataShared.ts`. Monolith is now a 25-line thin router.
+- ~~Split `web/src/lib/apiService.js`~~ → `web/src/api/{base,catalog,view,graph,query}Client.ts` + `types.ts`. Thin `.ts` re-export for legacy consumers.
+- ~~Rewrite `web/src/contexts/ScopeContext.jsx`~~ → deleted. Consumers updated.
+- ~~Rewrite `web/src/hooks/useNodeStats.js`~~ → rewritten as `useNodeStats.ts` (98 LOC). Strict server-contract consumer.
+
+Follow-up: review `dataShared.ts` (561 LOC) for further decomposition.
+
+### P2: Pipeline decomposition
+
+3. **Decompose `latentscope/scripts/scope.py`** — metadata assembly, label-tree transforms, parquet builds, and Lance export in one path. Split into stage modules under `latentscope/pipeline/stages/` (Target E).
+4. **Split `latentscope/server/jobs.py`** — 25 write routes, 51+ command fragments mixing policy, parsing, shell assembly, and process supervision. Split into `api/src/routes/import.ts` + pipeline runner service.
+5. **Split `latentscope/scripts/twitter_import.py`** — import source parsing coupled to full pipeline run. Separate ingest route from stage orchestrator.
+
+### P3: Validation
+
+6. **Incremental import tests** — import 2018 only, then 2019 incremental, verify no duplicates, verify edge counts, verify batch manifests.
 
 ## 15. Lance/LanceDB docs used for constraints
 

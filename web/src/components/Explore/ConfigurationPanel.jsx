@@ -41,8 +41,8 @@ const ConfigurationPanel = ({
     showTimeline = false,
   } = vizConfig;
 
-  const internalReplyEdges = linksMeta?.internal_edge_type_counts?.reply;
-  const internalQuoteEdges = linksMeta?.internal_edge_type_counts?.quote;
+  const internalReplyEdges = linksMeta?.internal_edge_kind_counts?.reply;
+  const internalQuoteEdges = linksMeta?.internal_edge_kind_counts?.quote;
   const internalEdges = linksMeta?.internal_edges ?? linksMeta?.internal_internal_edges;
   const hasInternalBreakdown =
     Number.isFinite(internalEdges) &&
@@ -151,7 +151,7 @@ const ConfigurationPanel = ({
                 <span>
                   {hasInternalBreakdown
                     ? `In-dataset links: ${internalEdges} (${internalReplyEdges} replies, ${internalQuoteEdges} quotes)`
-                    : `Links: ${linksMeta?.edges ?? 0} (${linksMeta?.edge_type_counts?.reply ?? 0} replies, ${linksMeta?.edge_type_counts?.quote ?? 0} quotes)`}
+                    : `Links: ${linksMeta?.edges ?? 0} (${linksMeta?.edge_kind_counts?.reply ?? 0} replies, ${linksMeta?.edge_kind_counts?.quote ?? 0} quotes)`}
                 </span>
               )}
             </div>

@@ -75,7 +75,7 @@ LATENT_SCOPE_MAX_UPLOAD_MB=1024
 LATENT_SCOPE_JOB_TIMEOUT_SEC=1800
 ```
 
-In hosted mode, the native X archive form supports a browser-side privacy mode that extracts/minimizes tweet JSON locally before upload.
+The native X archive form always extracts/minimizes tweet payloads in-browser before upload; raw zip uploads to `/jobs/import_twitter` are rejected.
 
 For Vercel deployment of demo + hosted variants from one GitHub repo, see `documentation/vercel-deployment.md`.
 

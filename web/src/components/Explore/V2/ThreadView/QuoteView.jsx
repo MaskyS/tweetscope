@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { ArrowLeft, Quote } from 'lucide-react';
-import { apiService } from '../../../../lib/apiService';
+import { graphClient } from '../../../../api/graphClient';
+import { queryClient } from '../../../../api/queryClient';
 import ThreadNode from './ThreadNode';
 import styles from './ThreadView.module.scss';
 
@@ -39,7 +40,7 @@ export default function QuoteView({
 
     (async () => {
       try {
-        const data = await apiService.fetchQuotes(datasetId, tweetId);
+        const data = await graphClient.fetchQuotes(datasetId, tweetId);
         if (cancelled || requestId !== requestIdRef.current) return;
 
         // Collect internal ls_indices for batch row fetch
@@ -51,7 +52,7 @@ export default function QuoteView({
 
         let rowMap = new Map();
         if (allIndices.size > 0) {
-          const rows = await apiService.fetchDataFromIndices(
+          const rows = await queryClient.fetchDataFromIndices(
             datasetId,
             Array.from(allIndices),
             null,

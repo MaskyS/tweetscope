@@ -569,7 +569,7 @@ const DeckGLScatter = forwardRef(function DeckGLScatter({
       if (!Number.isFinite(length) || length <= 0) continue;
 
       const row = {
-        edgeType: String(edge?.edge_type || '').toLowerCase(),
+        edgeType: String(edge?.edge_kind || '').toLowerCase(),
         length,
         path: null,
         color: null,

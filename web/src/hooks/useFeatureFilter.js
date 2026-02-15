@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { apiService } from '../lib/apiService';
+import { queryClient } from '../api/queryClient';
 import { useScope } from '../contexts/ScopeContext';
 const MIN_THRESHOLD = 0.01;
 const MAX_THRESHOLD = 0.2;
@@ -27,7 +27,7 @@ export default function useFeatureFilter({ userId, datasetId, scope, scopeLoaded
   const filter = async () => {
     console.log('feature filter', threshold);
     if (feature >= 0) {
-      const data = await apiService.searchSaeFeature(
+      const data = await queryClient.searchSaeFeature(
         datasetId,
         scope?.sae_id,
         feature,

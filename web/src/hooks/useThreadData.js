@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
-import { apiService } from '../lib/apiService';
+import { graphClient } from '../api/graphClient';
+import { queryClient } from '../api/queryClient';
 
 /**
  * Fetches a thread (parent chain + descendants) and enriches internal tweets with full row data.
@@ -43,7 +44,7 @@ export default function useThreadData(datasetId, scopeId, tweetId, currentLsInde
     (async () => {
       try {
         // 1. Fetch thread structure from backend
-        const threadData = await apiService.fetchThread(datasetId, tweetId);
+        const threadData = await graphClient.fetchThread(datasetId, tweetId);
         if (cancelled || requestId !== requestIdRef.current) return;
 
         const { parent_chain = [], descendants: rawDescendants = [], edges: rawEdges = [] } = threadData;
@@ -63,7 +64,7 @@ export default function useThreadData(datasetId, scopeId, tweetId, currentLsInde
         let rowMap = new Map();
         if (allInternalIndices.size > 0) {
           const indices = Array.from(allInternalIndices);
-          const rows = await apiService.fetchDataFromIndices(datasetId, indices, null, scopeId);
+          const rows = await queryClient.fetchDataFromIndices(datasetId, indices, null, scopeId);
           if (cancelled || requestId !== requestIdRef.current) return;
           for (const row of rows) {
             rowMap.set(row.index, row);
@@ -90,7 +91,7 @@ export default function useThreadData(datasetId, scopeId, tweetId, currentLsInde
         // We can compute depth from edges
         const parentOf = new Map();
         for (const edge of rawEdges) {
-          if (edge.edge_type === 'reply') {
+          if (edge.edge_kind === 'reply') {
             // src replies to dst → src's parent is dst
             parentOf.set(edge.src_tweet_id, edge.dst_tweet_id);
           }

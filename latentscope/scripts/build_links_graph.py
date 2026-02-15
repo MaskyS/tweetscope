@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -223,11 +224,250 @@ def _compute_thread_metadata(
     return thread_root_map, thread_depth_map, tweet_thread_size_map
 
 
+EDGE_COLUMNS = [
+    "edge_id",
+    "edge_kind",
+    "src_tweet_id",
+    "dst_tweet_id",
+    "src_ls_index",
+    "dst_ls_index",
+    "internal_target",
+    "provenance",
+    "source_url",
+]
+
+
+def _make_edge_id(src: str, dst: str, kind: str, provenance: str) -> str:
+    key = f"{src}|{dst}|{kind}|{provenance}"
+    return hashlib.sha256(key.encode()).hexdigest()[:16]
+
+
+def _canonicalize_edges_df(df: pd.DataFrame | None = None) -> pd.DataFrame:
+    if df is None or df.empty:
+        return pd.DataFrame(columns=EDGE_COLUMNS)
+
+    out = df.copy()
+    # Backward compatibility: links-v1 used `edge_type` instead of `edge_kind`.
+    if "edge_type" in out.columns:
+        legacy_edge_kind = out["edge_type"].map(_as_text).str.lower()
+        if "edge_kind" not in out.columns:
+            out["edge_kind"] = legacy_edge_kind
+        else:
+            existing_edge_kind = out["edge_kind"].map(_as_text)
+            missing_edge_kind = existing_edge_kind == ""
+            if missing_edge_kind.any():
+                out.loc[missing_edge_kind, "edge_kind"] = legacy_edge_kind[missing_edge_kind]
+
+    for col in EDGE_COLUMNS:
+        if col not in out.columns:
+            out[col] = None
+    out = out[EDGE_COLUMNS]
+    out["edge_kind"] = out["edge_kind"].map(_as_text).str.lower()
+    out = out[out["edge_kind"].isin({"reply", "quote"})].copy()
+    out["src_tweet_id"] = out["src_tweet_id"].map(_normalize_tweet_id)
+    out["dst_tweet_id"] = out["dst_tweet_id"].map(_normalize_tweet_id)
+    out = out[out["src_tweet_id"].notna() & out["dst_tweet_id"].notna()].copy()
+    out["src_ls_index"] = pd.to_numeric(out["src_ls_index"], errors="coerce")
+    out["dst_ls_index"] = pd.to_numeric(out["dst_ls_index"], errors="coerce")
+    out["internal_target"] = out["internal_target"].fillna(False).astype(bool)
+    out["provenance"] = out["provenance"].fillna("url_extract")
+    # Backfill edge_id for rows that lack one.
+    missing_id = out["edge_id"].isna() | (out["edge_id"].astype(str).str.strip() == "")
+    if missing_id.any():
+        out.loc[missing_id, "edge_id"] = out.loc[missing_id].apply(
+            lambda r: _make_edge_id(r["src_tweet_id"], r["dst_tweet_id"], r["edge_kind"], r["provenance"]),
+            axis=1,
+        )
+    out = out.drop_duplicates(subset=["edge_kind", "src_tweet_id", "dst_tweet_id"], keep="last")
+    return out.reset_index(drop=True)
+
+
+def _build_tweet_lookup(source_df: pd.DataFrame) -> dict[str, int]:
+    mapping: dict[str, int] = {}
+    for row in source_df.itertuples(index=False):
+        tweet_id = str(row.id)
+        if tweet_id not in mapping:
+            mapping[tweet_id] = int(row.ls_index)
+    return mapping
+
+
+def _build_edges_for_sources(
+    source_df: pd.DataFrame,
+    *,
+    tweet_id_to_ls_index: dict[str, int],
+) -> pd.DataFrame:
+    if source_df.empty:
+        return _canonicalize_edges_df()
+
+    edge_records: list[dict[str, Any]] = []
+    seen_edges: set[tuple[str, str, str]] = set()
+
+    for row in source_df.itertuples(index=False):
+        src_tweet_id = str(row.id)
+        src_ls_index = int(row.ls_index)
+
+        dst_reply = _normalize_tweet_id(getattr(row, "in_reply_to_status_id", None))
+        if dst_reply:
+            key = ("reply", src_tweet_id, dst_reply)
+            if key not in seen_edges:
+                seen_edges.add(key)
+                dst_ls = tweet_id_to_ls_index.get(dst_reply)
+                provenance = "native_field"
+                edge_records.append(
+                    {
+                        "edge_id": _make_edge_id(src_tweet_id, dst_reply, "reply", provenance),
+                        "edge_kind": "reply",
+                        "src_tweet_id": src_tweet_id,
+                        "dst_tweet_id": dst_reply,
+                        "src_ls_index": src_ls_index,
+                        "dst_ls_index": int(dst_ls) if dst_ls is not None else None,
+                        "internal_target": dst_ls is not None,
+                        "provenance": provenance,
+                        "source_url": None,
+                    }
+                )
+
+        # Native-field quote edge (provenance: native_field)
+        dst_quote_native = _normalize_tweet_id(getattr(row, "quoted_status_id", None))
+        if dst_quote_native and dst_quote_native != src_tweet_id:
+            key = ("quote", src_tweet_id, dst_quote_native)
+            if key not in seen_edges:
+                seen_edges.add(key)
+                dst_ls = tweet_id_to_ls_index.get(dst_quote_native)
+                provenance = "native_field"
+                edge_records.append(
+                    {
+                        "edge_id": _make_edge_id(src_tweet_id, dst_quote_native, "quote", provenance),
+                        "edge_kind": "quote",
+                        "src_tweet_id": src_tweet_id,
+                        "dst_tweet_id": dst_quote_native,
+                        "src_ls_index": src_ls_index,
+                        "dst_ls_index": int(dst_ls) if dst_ls is not None else None,
+                        "internal_target": dst_ls is not None,
+                        "provenance": provenance,
+                        "source_url": None,
+                    }
+                )
+
+        for raw_url in _parse_urls(getattr(row, "urls_json", "[]")):
+            normalized_url = _normalize_url(raw_url)
+            dst_quote = _extract_status_id(normalized_url)
+            if not dst_quote or dst_quote == src_tweet_id:
+                continue
+
+            key = ("quote", src_tweet_id, dst_quote)
+            if key in seen_edges:
+                continue
+            seen_edges.add(key)
+            dst_ls = tweet_id_to_ls_index.get(dst_quote)
+            provenance = "url_extract"
+            edge_records.append(
+                {
+                    "edge_id": _make_edge_id(src_tweet_id, dst_quote, "quote", provenance),
+                    "edge_kind": "quote",
+                    "src_tweet_id": src_tweet_id,
+                    "dst_tweet_id": dst_quote,
+                    "src_ls_index": src_ls_index,
+                    "dst_ls_index": int(dst_ls) if dst_ls is not None else None,
+                    "internal_target": dst_ls is not None,
+                    "provenance": provenance,
+                    "source_url": normalized_url,
+                }
+            )
+
+    return _canonicalize_edges_df(pd.DataFrame.from_records(edge_records))
+
+
+def _refresh_edge_targets(
+    edges_df: pd.DataFrame,
+    *,
+    tweet_id_to_ls_index: dict[str, int],
+) -> pd.DataFrame:
+    if edges_df.empty:
+        return edges_df
+
+    out = edges_df.copy()
+    out["src_ls_index"] = out["src_tweet_id"].map(tweet_id_to_ls_index)
+    out["dst_ls_index"] = out["dst_tweet_id"].map(tweet_id_to_ls_index)
+    out["internal_target"] = out["dst_ls_index"].notna()
+    return out
+
+
+def _build_node_stats_df(
+    *,
+    edges_df: pd.DataFrame,
+    tweet_id_to_ls_index: dict[str, int],
+) -> pd.DataFrame:
+    tweet_ids = set(tweet_id_to_ls_index.keys())
+
+    reply_out_count: dict[str, int] = defaultdict(int)
+    reply_in_count: dict[str, int] = defaultdict(int)
+    quote_out_count: dict[str, int] = defaultdict(int)
+    quote_in_count: dict[str, int] = defaultdict(int)
+    parent_map: dict[str, str] = {}
+    child_count_map: dict[str, int] = defaultdict(int)
+
+    if not edges_df.empty:
+        for row in edges_df.itertuples(index=False):
+            if row.edge_kind == "reply":
+                reply_out_count[row.src_tweet_id] += 1
+                if row.dst_tweet_id in tweet_ids:
+                    reply_in_count[row.dst_tweet_id] += 1
+                    child_count_map[row.dst_tweet_id] += 1
+                if row.src_tweet_id not in parent_map:
+                    parent_map[row.src_tweet_id] = row.dst_tweet_id
+            elif row.edge_kind == "quote":
+                quote_out_count[row.src_tweet_id] += 1
+                if row.dst_tweet_id in tweet_ids:
+                    quote_in_count[row.dst_tweet_id] += 1
+
+    thread_root_map, thread_depth_map, thread_size_map = _compute_thread_metadata(
+        tweet_ids=tweet_ids,
+        parent_map=parent_map,
+        child_count_map=child_count_map,
+    )
+
+    node_records: list[dict[str, Any]] = []
+    for tweet_id, ls_index in tweet_id_to_ls_index.items():
+        node_records.append(
+            {
+                "tweet_id": tweet_id,
+                "ls_index": int(ls_index),
+                "reply_out_count": int(reply_out_count.get(tweet_id, 0)),
+                "reply_in_count": int(reply_in_count.get(tweet_id, 0)),
+                "quote_out_count": int(quote_out_count.get(tweet_id, 0)),
+                "quote_in_count": int(quote_in_count.get(tweet_id, 0)),
+                "thread_root_id": thread_root_map.get(tweet_id, tweet_id),
+                "thread_depth": int(thread_depth_map.get(tweet_id, 0)),
+                "thread_size": int(thread_size_map.get(tweet_id, 1)),
+                "reply_child_count": int(child_count_map.get(tweet_id, 0)),
+            }
+        )
+
+    return pd.DataFrame.from_records(
+        node_records,
+        columns=[
+            "tweet_id",
+            "ls_index",
+            "reply_out_count",
+            "reply_in_count",
+            "quote_out_count",
+            "quote_in_count",
+            "thread_root_id",
+            "thread_depth",
+            "thread_size",
+            "reply_child_count",
+        ],
+    )
+
+
 def build_links_graph(
     dataset_id: str,
     *,
     scope_id: str | None = None,
     data_dir: str | None = None,
+    incremental: bool = False,
+    changed_tweet_ids: list[str] | None = None,
 ) -> dict[str, Any]:
     data_dir = data_dir or get_data_dir()
     dataset_dir = os.path.join(data_dir, dataset_id)
@@ -260,156 +500,77 @@ def build_links_graph(
 
     source_df = df[df["tweet_type"].isin(SOURCE_TWEET_TYPES)].copy()
     source_df = source_df[source_df["id"].astype(str).str.len() > 0].copy()
-
-    tweet_id_to_ls_index: dict[str, int] = {}
-    for row in source_df.itertuples(index=False):
-        tweet_id = str(row.id)
-        if tweet_id not in tweet_id_to_ls_index:
-            tweet_id_to_ls_index[tweet_id] = int(row.ls_index)
-
+    tweet_id_to_ls_index = _build_tweet_lookup(source_df)
     tweet_ids = set(tweet_id_to_ls_index.keys())
 
-    edge_records: list[dict[str, Any]] = []
-    seen_edges: set[tuple[str, str, str]] = set()
-
-    # Reply edges and parent map for thread metadata.
-    parent_map: dict[str, str] = {}
-    child_count_map: dict[str, int] = defaultdict(int)
-
-    for row in source_df.itertuples(index=False):
-        src_tweet_id = str(row.id)
-        src_ls_index = int(row.ls_index)
-
-        dst_reply = _normalize_tweet_id(getattr(row, "in_reply_to_status_id", None))
-        if dst_reply:
-            key = ("reply", src_tweet_id, dst_reply)
-            if key not in seen_edges:
-                seen_edges.add(key)
-                dst_ls = tweet_id_to_ls_index.get(dst_reply)
-                edge_records.append(
-                    {
-                        "edge_type": "reply",
-                        "src_tweet_id": src_tweet_id,
-                        "dst_tweet_id": dst_reply,
-                        "src_ls_index": src_ls_index,
-                        "dst_ls_index": int(dst_ls) if dst_ls is not None else None,
-                        "internal_target": dst_ls is not None,
-                        "source_url": None,
-                    }
-                )
-
-            parent_map[src_tweet_id] = dst_reply
-            if dst_reply in tweet_ids:
-                child_count_map[dst_reply] += 1
-
-        for raw_url in _parse_urls(getattr(row, "urls_json", "[]")):
-            normalized_url = _normalize_url(raw_url)
-            dst_quote = _extract_status_id(normalized_url)
-            if not dst_quote:
-                continue
-            if dst_quote == src_tweet_id:
-                continue
-
-            key = ("quote", src_tweet_id, dst_quote)
-            if key in seen_edges:
-                continue
-            seen_edges.add(key)
-
-            dst_ls = tweet_id_to_ls_index.get(dst_quote)
-            edge_records.append(
-                {
-                    "edge_type": "quote",
-                    "src_tweet_id": src_tweet_id,
-                    "dst_tweet_id": dst_quote,
-                    "src_ls_index": src_ls_index,
-                    "dst_ls_index": int(dst_ls) if dst_ls is not None else None,
-                    "internal_target": dst_ls is not None,
-                    "source_url": normalized_url,
-                }
-            )
-
-    edges_df = pd.DataFrame(
-        edge_records,
-        columns=[
-            "edge_type",
-            "src_tweet_id",
-            "dst_tweet_id",
-            "src_ls_index",
-            "dst_ls_index",
-            "internal_target",
-            "source_url",
-        ],
-    )
-
-    # Node-level link stats
-    reply_out_count: dict[str, int] = defaultdict(int)
-    reply_in_count: dict[str, int] = defaultdict(int)
-    quote_out_count: dict[str, int] = defaultdict(int)
-    quote_in_count: dict[str, int] = defaultdict(int)
-
-    if not edges_df.empty:
-        for row in edges_df.itertuples(index=False):
-            if row.edge_type == "reply":
-                reply_out_count[row.src_tweet_id] += 1
-                if row.dst_tweet_id in tweet_ids:
-                    reply_in_count[row.dst_tweet_id] += 1
-            elif row.edge_type == "quote":
-                quote_out_count[row.src_tweet_id] += 1
-                if row.dst_tweet_id in tweet_ids:
-                    quote_in_count[row.dst_tweet_id] += 1
-
-    thread_root_map, thread_depth_map, thread_size_map = _compute_thread_metadata(
-        tweet_ids=tweet_ids,
-        parent_map=parent_map,
-        child_count_map=child_count_map,
-    )
-
-    node_records: list[dict[str, Any]] = []
-    for tweet_id, ls_index in tweet_id_to_ls_index.items():
-        node_records.append(
-            {
-                "tweet_id": tweet_id,
-                "ls_index": int(ls_index),
-                "reply_out_count": int(reply_out_count.get(tweet_id, 0)),
-                "reply_in_count": int(reply_in_count.get(tweet_id, 0)),
-                "quote_out_count": int(quote_out_count.get(tweet_id, 0)),
-                "quote_in_count": int(quote_in_count.get(tweet_id, 0)),
-                "thread_root_id": thread_root_map.get(tweet_id, tweet_id),
-                "thread_depth": int(thread_depth_map.get(tweet_id, 0)),
-                "thread_size": int(thread_size_map.get(tweet_id, 1)),
-                "reply_child_count": int(child_count_map.get(tweet_id, 0)),
-            }
+    normalized_changed_ids = {
+        normalized
+        for normalized in (
+            _normalize_tweet_id(value)
+            for value in (changed_tweet_ids or [])
         )
+        if normalized
+    }
 
-    node_stats_df = pd.DataFrame(
-        node_records,
-        columns=[
-            "tweet_id",
-            "ls_index",
-            "reply_out_count",
-            "reply_in_count",
-            "quote_out_count",
-            "quote_in_count",
-            "thread_root_id",
-            "thread_depth",
-            "thread_size",
-            "reply_child_count",
-        ],
-    )
+    # Scope-specific link builds are always rebuilt from scratch.
+    incremental_requested = bool(incremental and normalized_changed_ids and not scope_id)
+    incremental_used = False
 
     links_dir = os.path.join(dataset_dir, "links")
     os.makedirs(links_dir, exist_ok=True)
-
     edges_path = os.path.join(links_dir, "edges.parquet")
+
+    if incremental_requested and os.path.exists(edges_path):
+        existing_edges_raw = pd.read_parquet(edges_path)
+        existing_edges = _canonicalize_edges_df(existing_edges_raw)
+
+        # Safety valve: if a non-empty legacy artifact cannot be canonicalized,
+        # do a full rebuild instead of silently dropping unrelated edges.
+        if not existing_edges_raw.empty and existing_edges.empty:
+            print(
+                "WARNING: Existing links artifact could not be canonicalized for incremental merge; "
+                "falling back to full rebuild."
+            )
+            edges_df = _build_edges_for_sources(source_df, tweet_id_to_ls_index=tweet_id_to_ls_index)
+        else:
+            existing_edges = existing_edges[existing_edges["src_tweet_id"].isin(tweet_ids)].copy()
+
+            impacted_source_ids = {tweet_id for tweet_id in normalized_changed_ids if tweet_id in tweet_ids}
+            if not existing_edges.empty:
+                impacted_from_targets = existing_edges[
+                    existing_edges["dst_tweet_id"].isin(normalized_changed_ids)
+                ]["src_tweet_id"].tolist()
+                impacted_source_ids.update(impacted_from_targets)
+
+            if impacted_source_ids:
+                impacted_source_df = source_df[source_df["id"].isin(impacted_source_ids)].copy()
+                recomputed_edges = _build_edges_for_sources(
+                    impacted_source_df,
+                    tweet_id_to_ls_index=tweet_id_to_ls_index,
+                )
+                preserved_edges = existing_edges[
+                    ~existing_edges["src_tweet_id"].isin(impacted_source_ids)
+                ].copy()
+                edges_df = _canonicalize_edges_df(pd.concat([preserved_edges, recomputed_edges], ignore_index=True))
+            else:
+                edges_df = existing_edges
+            incremental_used = True
+    else:
+        edges_df = _build_edges_for_sources(source_df, tweet_id_to_ls_index=tweet_id_to_ls_index)
+
+    edges_df = _refresh_edge_targets(edges_df, tweet_id_to_ls_index=tweet_id_to_ls_index)
+    edges_df = edges_df[edges_df["src_tweet_id"].isin(tweet_ids)].copy().reset_index(drop=True)
+    node_stats_df = _build_node_stats_df(edges_df=edges_df, tweet_id_to_ls_index=tweet_id_to_ls_index)
+
     node_stats_path = os.path.join(links_dir, "node_link_stats.parquet")
     meta_path = os.path.join(links_dir, "meta.json")
 
     edges_df.to_parquet(edges_path, index=False)
     node_stats_df.to_parquet(node_stats_path, index=False)
 
-    edge_type_counts = {
-        "reply": int((edges_df["edge_type"] == "reply").sum()) if not edges_df.empty else 0,
-        "quote": int((edges_df["edge_type"] == "quote").sum()) if not edges_df.empty else 0,
+    edge_kind_counts = {
+        "reply": int((edges_df["edge_kind"] == "reply").sum()) if not edges_df.empty else 0,
+        "quote": int((edges_df["edge_kind"] == "quote").sum()) if not edges_df.empty else 0,
     }
 
     if edges_df.empty:
@@ -417,24 +578,27 @@ def build_links_graph(
     else:
         internal_mask = edges_df["src_ls_index"].notna() & edges_df["dst_ls_index"].notna()
 
-    internal_edge_type_counts = {
-        "reply": int(((edges_df["edge_type"] == "reply") & internal_mask).sum()) if not edges_df.empty else 0,
-        "quote": int(((edges_df["edge_type"] == "quote") & internal_mask).sum()) if not edges_df.empty else 0,
+    internal_edge_kind_counts = {
+        "reply": int(((edges_df["edge_kind"] == "reply") & internal_mask).sum()) if not edges_df.empty else 0,
+        "quote": int(((edges_df["edge_kind"] == "quote") & internal_mask).sum()) if not edges_df.empty else 0,
     }
     internal_internal_count = int(internal_mask.sum()) if not edges_df.empty else 0
 
     meta = {
         "dataset_id": dataset_id,
         "scope_id": scope_id,
-        "schema_version": "links-v1",
+        "schema_version": "links-v2",
         "built_at": datetime.now(timezone.utc).isoformat(),
         "ls_version": __version__,
         "nodes": int(len(node_stats_df)),
         "edges": int(len(edges_df)),
-        "edge_type_counts": edge_type_counts,
-        "internal_edge_type_counts": internal_edge_type_counts,
+        "edge_kind_counts": edge_kind_counts,
+        "internal_edge_kind_counts": internal_edge_kind_counts,
         "internal_edges": internal_internal_count,
         "internal_internal_edges": internal_internal_count,
+        "incremental_requested": bool(incremental_requested),
+        "incremental": bool(incremental_used),
+        "changed_tweet_ids_count": int(len(normalized_changed_ids)),
     }
 
     with open(meta_path, "w", encoding="utf-8") as f:
@@ -445,13 +609,16 @@ def build_links_graph(
         "scope_id": scope_id,
         "nodes": int(len(node_stats_df)),
         "edges": int(len(edges_df)),
-        "edge_type_counts": edge_type_counts,
-        "internal_edge_type_counts": internal_edge_type_counts,
+        "edge_kind_counts": edge_kind_counts,
+        "internal_edge_kind_counts": internal_edge_kind_counts,
         "internal_edges": internal_internal_count,
         "links_dir": links_dir,
         "edges_path": edges_path,
         "node_stats_path": node_stats_path,
         "meta_path": meta_path,
+        "incremental_requested": bool(incremental_requested),
+        "incremental": bool(incremental_used),
+        "changed_tweet_ids_count": int(len(normalized_changed_ids)),
     }
 
 
@@ -460,17 +627,35 @@ def main() -> None:
     parser.add_argument("dataset_id", type=str, help="Dataset identifier")
     parser.add_argument("--scope_id", type=str, default=None, help="Optional scope id to restrict links")
     parser.add_argument("--data_dir", type=str, default=None, help="Override LATENT_SCOPE_DATA directory")
+    parser.add_argument(
+        "--incremental",
+        action="store_true",
+        help="Incrementally rebuild links for changed tweet ids when prior artifacts exist",
+    )
+    parser.add_argument(
+        "--changed_tweet_id",
+        action="append",
+        default=[],
+        help="Tweet id changed in this import batch (repeat flag for multiple ids)",
+    )
     args = parser.parse_args()
 
-    result = build_links_graph(args.dataset_id, scope_id=args.scope_id, data_dir=args.data_dir)
+    result = build_links_graph(
+        args.dataset_id,
+        scope_id=args.scope_id,
+        data_dir=args.data_dir,
+        incremental=args.incremental,
+        changed_tweet_ids=args.changed_tweet_id,
+    )
 
     print(f"DATASET_ID: {result['dataset_id']}")
     if result.get("scope_id"):
         print(f"SCOPE_ID: {result['scope_id']}")
     print(f"NODES: {result['nodes']}")
     print(f"EDGES: {result['edges']}")
-    print(f"REPLY_EDGES: {result['edge_type_counts']['reply']}")
-    print(f"QUOTE_EDGES: {result['edge_type_counts']['quote']}")
+    print(f"REPLY_EDGES: {result['edge_kind_counts']['reply']}")
+    print(f"QUOTE_EDGES: {result['edge_kind_counts']['quote']}")
+    print(f"INCREMENTAL: {result['incremental']}")
     print(f"LINKS_DIR: {result['links_dir']}")
 
 

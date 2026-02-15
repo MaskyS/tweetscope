@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useScope } from '@/contexts/ScopeContext';
-import { apiService } from '@/lib/apiService';
+import { queryClient } from '@/api/queryClient';
 
 const ROWS_PER_PAGE = 30;
 const PREFETCH_RANGE = 2; // Fetch columns within focusedIndex +/- this range
@@ -104,7 +104,7 @@ export default function useCarouselData(focusedClusterIndex, enabled = true) {
         },
       }));
 
-      apiService
+      queryClient
         .fetchDataFromIndices(dataset.id, pageIndices, scope?.sae_id, scope?.id)
         .then((rows) => {
           // Map rows to include ls_index and idx (same as FilterContext does)

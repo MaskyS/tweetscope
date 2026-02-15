@@ -557,7 +557,7 @@ const VisualizationPane = forwardRef(function VisualizationPane({
       const src = Number(edge?.src_ls_index);
       const dst = Number(edge?.dst_ls_index);
       if (!Number.isInteger(src) || !Number.isInteger(dst)) continue;
-      const type = String(edge?.edge_type || '').toLowerCase();
+      const type = String(edge?.edge_kind || '').toLowerCase();
 
       if (type === 'reply') {
         if (src === target) {

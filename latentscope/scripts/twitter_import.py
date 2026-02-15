@@ -7,6 +7,8 @@ import glob
 import json
 import os
 import re
+import uuid
+from datetime import datetime, timezone
 from typing import Any
 
 import pandas as pd
@@ -44,6 +46,199 @@ def _build_df(rows: list[dict[str, Any]]) -> pd.DataFrame:
     df = df[df["text"].astype(str).str.len() > 0]
     df = df.reset_index(drop=True)
     return df
+
+
+def _normalize_id_column(df: pd.DataFrame) -> pd.DataFrame:
+    if "id" not in df.columns:
+        raise ValueError("Import dataframe must contain an 'id' column")
+    out = df.copy()
+    out["id"] = out["id"].astype(str).str.strip()
+    out = out[out["id"].str.len() > 0].copy()
+    return out
+
+
+def _normalize_tweet_type_for_dedupe(value: Any) -> str:
+    if value is None:
+        return "tweet"
+    try:
+        if pd.isna(value):
+            return "tweet"
+    except Exception:
+        pass
+    text = str(value).strip().lower()
+    return text or "tweet"
+
+
+def _tweet_type_dedupe_rank(value: Any) -> int:
+    normalized = _normalize_tweet_type_for_dedupe(value)
+    if normalized in {"tweet", "note_tweet"}:
+        return 2
+    if normalized == "like":
+        return 1
+    return 0
+
+
+def _dedupe_rows_by_id(df: pd.DataFrame) -> pd.DataFrame:
+    out = _normalize_id_column(df)
+    if out.empty:
+        return out
+
+    out["_ls_import_order"] = range(len(out))
+    if "created_at" in out.columns:
+        out["_ls_created_sort"] = pd.to_datetime(out["created_at"], errors="coerce", utc=True)
+    else:
+        out["_ls_created_sort"] = pd.NaT
+
+    if "tweet_type" in out.columns:
+        out["_ls_tweet_type_rank"] = out["tweet_type"].map(_tweet_type_dedupe_rank)
+    else:
+        out["_ls_tweet_type_rank"] = _tweet_type_dedupe_rank("tweet")
+
+    out = out.sort_values(
+        ["id", "_ls_tweet_type_rank", "_ls_created_sort", "_ls_import_order"],
+        kind="stable",
+    )
+    out = out.drop_duplicates(subset=["id"], keep="last")
+    out = out.sort_values("_ls_import_order", kind="stable")
+    out = out.drop(columns=["_ls_import_order", "_ls_created_sort", "_ls_tweet_type_rank"]).reset_index(drop=True)
+    return out
+
+
+def _normalize_existing_records_df(df: pd.DataFrame) -> pd.DataFrame:
+    out = _normalize_id_column(df)
+    if "ls_index" in out.columns:
+        out["ls_index"] = pd.to_numeric(out["ls_index"], errors="coerce")
+    else:
+        out["ls_index"] = range(len(out))
+
+    missing_mask = out["ls_index"].isna()
+    if missing_mask.any():
+        current = out["ls_index"].dropna()
+        start = int(current.max()) + 1 if not current.empty else 0
+        out.loc[missing_mask, "ls_index"] = range(start, start + int(missing_mask.sum()))
+
+    out["ls_index"] = out["ls_index"].astype(int)
+    if "tweet_type" in out.columns:
+        out["_ls_tweet_type_rank"] = out["tweet_type"].map(_tweet_type_dedupe_rank)
+    else:
+        out["_ls_tweet_type_rank"] = _tweet_type_dedupe_rank("tweet")
+
+    out = out.sort_values(["id", "_ls_tweet_type_rank", "ls_index"], kind="stable").drop_duplicates(subset=["id"], keep="last")
+    out = out.drop(columns=["_ls_tweet_type_rank"])
+    out = out.sort_values("ls_index", kind="stable").reset_index(drop=True)
+    return out
+
+
+def _next_import_batch_id() -> str:
+    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    return f"batch-{ts}-{uuid.uuid4().hex[:8]}"
+
+
+def _write_import_batch_manifest(
+    dataset_dir: str,
+    batch_id: str,
+    payload: dict[str, Any],
+) -> str:
+    imports_dir = os.path.join(dataset_dir, "imports")
+    os.makedirs(imports_dir, exist_ok=True)
+    out_path = os.path.join(imports_dir, f"{batch_id}.json")
+    with open(out_path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+    return out_path
+
+
+def _upsert_import_rows(
+    *,
+    dataset_id: str,
+    incoming_df: pd.DataFrame,
+    text_column: str,
+    data_dir: str,
+    import_batch_id: str | None = None,
+    manifest_extra: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    dataset_dir = os.path.join(data_dir, dataset_id)
+    input_path = os.path.join(dataset_dir, "input.parquet")
+
+    incoming = _dedupe_rows_by_id(incoming_df)
+    if incoming.empty:
+        raise ValueError("No rows available for upsert after id de-duplication")
+
+    batch_id = import_batch_id.strip() if import_batch_id else _next_import_batch_id()
+    if not batch_id:
+        batch_id = _next_import_batch_id()
+
+    if os.path.exists(input_path):
+        existing = pd.read_parquet(input_path)
+        existing = _normalize_existing_records_df(existing)
+    else:
+        existing = pd.DataFrame(columns=[*incoming.columns.tolist(), "ls_index"])
+
+    existing_cols = existing.columns.tolist()
+    incoming_cols = incoming.columns.tolist()
+    all_columns: list[str] = []
+    for col in existing_cols + incoming_cols + ["ls_index"]:
+        if col not in all_columns:
+            all_columns.append(col)
+
+    if "id" in all_columns:
+        all_columns = ["id", *[col for col in all_columns if col != "id"]]
+
+    existing = existing.reindex(columns=all_columns)
+    incoming = incoming.reindex(columns=all_columns)
+
+    existing_by_id = existing.set_index("id", drop=False)
+    incoming_by_id = incoming.set_index("id", drop=False)
+
+    incoming_ids = incoming_by_id.index.tolist()
+    existing_ids = set(existing_by_id.index.tolist())
+    inserted_ids = [tweet_id for tweet_id in incoming_ids if tweet_id not in existing_ids]
+    updated_ids = [tweet_id for tweet_id in incoming_ids if tweet_id in existing_ids]
+
+    if not existing_by_id.empty:
+        existing_by_id.update(incoming_by_id)
+
+    if inserted_ids:
+        start_idx = int(existing_by_id["ls_index"].max()) + 1 if not existing_by_id.empty else 0
+        new_rows = incoming_by_id.loc[inserted_ids].copy()
+        new_rows["ls_index"] = list(range(start_idx, start_idx + len(inserted_ids)))
+        merged = pd.concat([existing_by_id, new_rows], axis=0)
+    else:
+        merged = existing_by_id
+
+    merged["ls_index"] = pd.to_numeric(merged["ls_index"], errors="coerce")
+    if merged["ls_index"].isna().any():
+        current = merged["ls_index"].dropna()
+        start = int(current.max()) + 1 if not current.empty else 0
+        missing = merged["ls_index"].isna()
+        merged.loc[missing, "ls_index"] = range(start, start + int(missing.sum()))
+    merged["ls_index"] = merged["ls_index"].astype(int)
+    merged_df = merged.sort_values("ls_index", kind="stable").reset_index(drop=True)
+
+    ingest(dataset_id, merged_df, text_column=text_column)
+
+    manifest_payload = {
+        "id": batch_id,
+        "dataset_id": dataset_id,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "batch_rows": int(len(incoming_ids)),
+        "inserted_rows": int(len(inserted_ids)),
+        "updated_rows": int(len(updated_ids)),
+        "dataset_rows": int(len(merged_df)),
+        "changed_tweet_ids_count": int(len(incoming_ids)),
+    }
+    if manifest_extra:
+        manifest_payload.update(manifest_extra)
+    manifest_path = _write_import_batch_manifest(dataset_dir, batch_id, manifest_payload)
+
+    return {
+        "import_batch_id": batch_id,
+        "batch_rows": int(len(incoming_ids)),
+        "dataset_rows": int(len(merged_df)),
+        "inserted_rows": int(len(inserted_ids)),
+        "updated_rows": int(len(updated_ids)),
+        "changed_tweet_ids": incoming_ids,
+        "manifest_path": manifest_path,
+    }
 
 
 def _find_matching_toponymy_labels_id(
@@ -433,6 +628,8 @@ def run_import(
     toponymy_base_min_cluster_size: int = 10,
     toponymy_context: str | None = None,
     build_links: bool = False,
+    import_batch_id: str | None = None,
+    incremental_links: bool = True,
 ) -> dict[str, Any]:
     dataset_id = sanitize_dataset_id(dataset_id)
 
@@ -467,12 +664,34 @@ def run_import(
     if not filtered:
         raise ValueError("No rows available after filtering")
 
+    data_dir = get_data_dir()
     df = _build_df(filtered)
-    ingest(dataset_id, df, text_column=text_column)
+    upsert_summary = _upsert_import_rows(
+        dataset_id=dataset_id,
+        incoming_df=df,
+        text_column=text_column,
+        data_dir=data_dir,
+        import_batch_id=import_batch_id,
+        manifest_extra={
+            "source": imported.source,
+            "year": year,
+            "lang": lang,
+            "top_n": top_n,
+            "sort": sort,
+            "include_likes": include_likes,
+            "exclude_replies": exclude_replies,
+            "exclude_retweets": exclude_retweets,
+        },
+    )
 
     summary: dict[str, Any] = {
         "dataset_id": dataset_id,
-        "rows": int(df.shape[0]),
+        "rows": int(upsert_summary["batch_rows"]),
+        "dataset_rows": int(upsert_summary["dataset_rows"]),
+        "inserted_rows": int(upsert_summary["inserted_rows"]),
+        "updated_rows": int(upsert_summary["updated_rows"]),
+        "import_batch_id": upsert_summary["import_batch_id"],
+        "import_manifest_path": upsert_summary["manifest_path"],
         "profile": imported.profile,
         "source": imported.source,
     }
@@ -480,11 +699,16 @@ def run_import(
     if not run_pipeline:
         if build_links:
             try:
-                links_summary = build_links_graph(dataset_id)
+                links_summary = build_links_graph(
+                    dataset_id,
+                    incremental=incremental_links,
+                    changed_tweet_ids=upsert_summary["changed_tweet_ids"],
+                )
                 summary["links"] = {
                     "nodes": links_summary["nodes"],
                     "edges": links_summary["edges"],
-                    "edge_type_counts": links_summary["edge_type_counts"],
+                    "edge_kind_counts": links_summary["edge_kind_counts"],
+                    "incremental": bool(links_summary.get("incremental")),
                 }
             except Exception as err:
                 summary["links_error"] = str(err)
@@ -502,7 +726,6 @@ def run_import(
         max_seq_length=None,
     )
 
-    data_dir = get_data_dir()
     dataset_dir = os.path.join(data_dir, dataset_id)
     embedding_id = _latest_id(os.path.join(dataset_dir, "embeddings"), r"embedding-\d+\.json")
 
@@ -600,11 +823,17 @@ def run_import(
 
     if build_links:
         try:
-            links_summary = build_links_graph(dataset_id, scope_id=scope_id)
+            links_summary = build_links_graph(
+                dataset_id,
+                scope_id=scope_id,
+                incremental=incremental_links,
+                changed_tweet_ids=upsert_summary["changed_tweet_ids"],
+            )
             summary["links"] = {
                 "nodes": links_summary["nodes"],
                 "edges": links_summary["edges"],
-                "edge_type_counts": links_summary["edge_type_counts"],
+                "edge_kind_counts": links_summary["edge_kind_counts"],
+                "incremental": bool(links_summary.get("incremental")),
             }
         except Exception as err:
             summary["links_error"] = str(err)
@@ -700,6 +929,19 @@ def main() -> None:
         "--build_links",
         action="store_true",
         help="Build reply/quote link graph artifacts after import",
+    )
+    parser.add_argument(
+        "--import_batch_id",
+        type=str,
+        default=None,
+        help="Optional stable import batch id for progressive imports",
+    )
+    parser.add_argument(
+        "--incremental-links",
+        dest="incremental_links",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Enable incremental links rebuild using changed tweet ids (default: enabled)",
     )
 
     args = parser.parse_args()

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { apiService } from '../lib/apiService';
+import { queryClient } from '../api/queryClient';
 
 const useColumnFilter = (userId, datasetId, scope) => {
   const [columnToValue, setColumnToValue] = useState({});
@@ -27,7 +27,7 @@ const useColumnFilter = (userId, datasetId, scope) => {
         value: value,
       },
     ];
-    const res = await apiService.columnFilter(datasetId, query, scope?.id);
+    const res = await queryClient.columnFilter(datasetId, query, scope?.id);
     console.log('column filter res', res);
     return res.indices;
   };

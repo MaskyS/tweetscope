@@ -528,7 +528,7 @@ function ExploreContent() {
       apiService
         .fetchLinksByIndices(dataset.id, {
           indices: indices.length > 0 ? indices : null,
-          edge_types: ['reply', 'quote'],
+          edge_kinds: ['reply', 'quote'],
           include_external: false,
           max_edges: EDGE_FETCH_MAX,
         })
@@ -629,7 +629,7 @@ function ExploreContent() {
 
     const memberEdges = Array.isArray(edges)
       ? edges.filter((edge) => {
-        if (String(edge?.edge_type || '').toLowerCase() !== 'reply') return false;
+        if (String(edge?.edge_kind || '').toLowerCase() !== 'reply') return false;
         const src = Number(edge?.src_ls_index);
         const dst = Number(edge?.dst_ls_index);
         return normalizedIndices.has(src) && normalizedIndices.has(dst);

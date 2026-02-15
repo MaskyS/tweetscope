@@ -1,13 +1,15 @@
 {
-  "version": "links-v1",
+  "version": "links-v2",
   "edges": {
     "required_columns": {
-      "edge_type":       { "type": "string", "nullable": false },
+      "edge_id":         { "type": "string", "nullable": false },
+      "edge_kind":       { "type": "string", "nullable": false },
       "src_tweet_id":    { "type": "string", "nullable": false },
       "dst_tweet_id":    { "type": "string", "nullable": false },
       "src_ls_index":    { "type": "int",    "nullable": false },
       "dst_ls_index":    { "type": "int",    "nullable": true },
       "internal_target": { "type": "bool",   "nullable": false },
+      "provenance":      { "type": "string", "nullable": false },
       "source_url":      { "type": "string", "nullable": true }
     }
   },

@@ -1,12 +1,12 @@
-import { useState, useCallback, useEffect } from 'react';
-import { apiService, apiUrl } from '../lib/apiService';
+import { useState, useCallback } from 'react';
+import { queryClient } from '../api/queryClient';
 
 export default function useNearestNeighborsSearch({ userId, datasetId, scope, deletedIndices }) {
   const [distances, setDistances] = useState([]);
 
   const filter = async (query) => {
     try {
-      return await apiService
+      return await queryClient
         .searchNearestNeighbors(datasetId, scope.embedding, query, scope)
         .then((data) => {
           const { indices, distances } = data;

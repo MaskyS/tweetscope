@@ -4,7 +4,7 @@ import PropTypes from 'prop-types';
 import { jobPolling } from './Job/Run';
 import JobProgress from './Job/Progress';
 import { Button, Input } from 'react-element-forge';
-import { apiUrl, apiService } from '../lib/apiService';
+import { apiUrl, catalogClient } from '../lib/apiService';
 import { extractTwitterArchiveForImport } from '../lib/twitterArchiveParser';
 const readonly = import.meta.env.MODE == 'read_only';
 
@@ -19,14 +19,14 @@ function Home({ appConfig = null }) {
   const [datasets, setDatasets] = useState([]);
 
   useEffect(() => {
-    apiService.fetchDatasets().then(setDatasets);
+    catalogClient.fetchDatasets().then(setDatasets);
   }, []);
 
   const [scopes, setScopes] = useState({});
 
   useEffect(() => {
     datasets.forEach((dataset) => {
-      apiService.fetchScopes(dataset.id).then((data) =>
+      catalogClient.fetchScopes(dataset.id).then((data) =>
         setScopes((prevScopes) => {
           const ret = { ...prevScopes };
           ret[dataset.id] = data;
@@ -60,7 +60,6 @@ function Home({ appConfig = null }) {
   const [twitterArchiveDatasetName, setTwitterArchiveDatasetName] = useState('');
   const [twitterArchiveYear, setTwitterArchiveYear] = useState('');
   const [twitterArchiveIncludeLikes, setTwitterArchiveIncludeLikes] = useState(true);
-  const [processArchiveLocally, setProcessArchiveLocally] = useState(true);
   const [twitterArchiveExtracting, setTwitterArchiveExtracting] = useState(false);
   const [localExtractedRecordCount, setLocalExtractedRecordCount] = useState(null);
 
@@ -93,32 +92,27 @@ function Home({ appConfig = null }) {
         formData.append('year', twitterArchiveYear);
       }
       try {
-        if (processArchiveLocally) {
-          setTwitterArchiveExtracting(true);
-          const extractedRaw = await extractTwitterArchiveForImport(twitterArchiveFile);
-          const extracted = twitterArchiveIncludeLikes
-            ? extractedRaw
-            : {
-                ...extractedRaw,
-                likes: [],
-                likes_count: 0,
-                total_count: extractedRaw?.tweet_count || extractedRaw?.tweets?.length || 0,
-              };
-          const recordCount =
-            extracted?.total_count ||
-            (extracted?.tweet_count || extracted?.tweets?.length || 0) +
-              (extracted?.likes_count || extracted?.likes?.length || 0);
-          setLocalExtractedRecordCount(recordCount || null);
-          const payload = JSON.stringify(extracted);
-          const extractedFile = new File([payload], `twitter-extract-${Date.now()}.json`, {
-            type: 'application/json',
-          });
-          formData.append('source_type', 'community_json');
-          formData.append('file', extractedFile);
-        } else {
-          formData.append('source_type', 'zip');
-          formData.append('file', twitterArchiveFile);
-        }
+        setTwitterArchiveExtracting(true);
+        const extractedRaw = await extractTwitterArchiveForImport(twitterArchiveFile);
+        const extracted = twitterArchiveIncludeLikes
+          ? extractedRaw
+          : {
+              ...extractedRaw,
+              likes: [],
+              likes_count: 0,
+              total_count: extractedRaw?.tweet_count || extractedRaw?.tweets?.length || 0,
+            };
+        const recordCount =
+          extracted?.total_count ||
+          (extracted?.tweet_count || extracted?.tweets?.length || 0) +
+            (extracted?.likes_count || extracted?.likes?.length || 0);
+        setLocalExtractedRecordCount(recordCount || null);
+        const payload = JSON.stringify(extracted);
+        const extractedFile = new File([payload], `twitter-extract-${Date.now()}.json`, {
+          type: 'application/json',
+        });
+        formData.append('source_type', 'community_json');
+        formData.append('file', extractedFile);
 
         const data = await fetch(`${apiUrl}/jobs/import_twitter`, {
           method: 'POST',
@@ -138,7 +132,6 @@ function Home({ appConfig = null }) {
       twitterArchiveYear,
       twitterArchiveIncludeLikes,
       parseApiResponse,
-      processArchiveLocally,
     ]
   );
 
@@ -185,7 +178,7 @@ function Home({ appConfig = null }) {
     }
 
     if (datasetId) {
-      apiService.fetchScopes(datasetId).then((scopeRows) => {
+      catalogClient.fetchScopes(datasetId).then((scopeRows) => {
         const sorted = [...scopeRows].sort((a, b) => a.id.localeCompare(b.id));
         const latest = sorted[sorted.length - 1];
         if (latest?.id) {
@@ -222,21 +215,9 @@ function Home({ appConfig = null }) {
 
                 {maxUploadMb ? <span className={styles.uploadLimit}>Upload limit: {maxUploadMb} MB</span> : null}
 
-                {/* Privacy mode checkbox */}
-                <label className={styles.checkboxRow} htmlFor="twitter-local-parse">
-                  <input
-                    id="twitter-local-parse"
-                    type="checkbox"
-                    checked={processArchiveLocally}
-                    onChange={(e) => setProcessArchiveLocally(e.target.checked)}
-                  />
-                  <div>
-                    <div className={styles.checkboxLabel}>Process archive locally in browser (privacy mode)</div>
-                    {processArchiveLocally ? (
-                      <div className={styles.checkboxHint}>Uploads extracted tweet JSON instead of raw zip.</div>
-                    ) : null}
-                  </div>
-                </label>
+                <div className={styles.helperNote}>
+                  Archive zip is processed locally in your browser. Only extracted tweet payload is uploaded.
+                </div>
                 <label className={styles.checkboxRow} htmlFor="twitter-include-likes">
                   <input
                     id="twitter-include-likes"
@@ -246,9 +227,9 @@ function Home({ appConfig = null }) {
                   />
                   <div>
                     <div className={styles.checkboxLabel}>Include likes in import</div>
-                    {!twitterArchiveIncludeLikes && processArchiveLocally ? (
+                    {!twitterArchiveIncludeLikes ? (
                       <div className={styles.checkboxHint}>
-                        Likes are stripped client-side before upload in privacy mode.
+                        Likes are stripped client-side before upload.
                       </div>
                     ) : null}
                   </div>

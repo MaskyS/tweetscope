@@ -4,12 +4,14 @@ import json
 import uuid
 import shlex
 import shutil
-import zipfile
 import subprocess
 import threading
 from datetime import datetime
 from flask import Blueprint, jsonify, request
-from latentscope.importers.twitter import sanitize_dataset_id
+from latentscope.importers.twitter import (
+    sanitize_dataset_id,
+    validate_extracted_archive_payload,
+)
 
 # Create a Blueprint
 jobs_bp = Blueprint('jobs_bp', __name__)
@@ -219,7 +221,7 @@ def run_ingest():
 def run_import_twitter():
     job_id = str(uuid.uuid4())
     dataset = request.form.get('dataset', '')
-    source_type = request.form.get('source_type', 'zip')
+    source_type = request.form.get('source_type', 'community_json').strip().lower()
     cleanup_paths = []
 
     try:
@@ -234,21 +236,20 @@ def run_import_twitter():
 
     command_parts = ['ls-twitter-import', dataset]
 
-    if source_type == 'zip':
-        file = request.files.get('file')
-        if file is None:
-            return jsonify({"error": "Missing zip file"}), 400
-        job_upload_dir = os.path.join(uploads_dir, job_id)
-        os.makedirs(job_upload_dir, exist_ok=True)
-        file_ext = os.path.splitext(file.filename or "")[1].lower() or ".zip"
-        file_path = os.path.join(job_upload_dir, f"twitter-archive-{uuid.uuid4().hex}{file_ext}")
-        file.save(file_path)
-        if not zipfile.is_zipfile(file_path):
-            shutil.rmtree(job_upload_dir, ignore_errors=True)
-            return jsonify({"error": "Uploaded file is not a valid zip archive"}), 400
-        command_parts.extend(['--source', 'zip', '--zip_path', file_path])
-        cleanup_paths.append(job_upload_dir)
-    elif source_type == 'community':
+    if source_type == "zip":
+        return (
+            jsonify(
+                {
+                    "error": (
+                        "Raw zip uploads are disabled. "
+                        "Upload extracted JSON payload instead (source_type=community_json)."
+                    )
+                }
+            ),
+            400,
+        )
+
+    if source_type == 'community':
         username = request.form.get('username', '').strip()
         if not username:
             return jsonify({"error": "Missing username"}), 400
@@ -261,6 +262,13 @@ def run_import_twitter():
         os.makedirs(job_upload_dir, exist_ok=True)
         file_path = os.path.join(job_upload_dir, f"community-extract-{uuid.uuid4().hex}.json")
         file.save(file_path)
+        try:
+            with open(file_path, "r", encoding="utf-8") as handle:
+                payload = json.load(handle)
+            validate_extracted_archive_payload(payload, require_archive_format=True)
+        except (OSError, json.JSONDecodeError, ValueError) as err:
+            shutil.rmtree(job_upload_dir, ignore_errors=True)
+            return jsonify({"error": f"Invalid extracted archive payload: {err}"}), 400
         cleanup_paths.append(job_upload_dir)
         command_parts.extend(['--source', 'community_json', '--input_path', file_path])
     else:
@@ -280,6 +288,7 @@ def run_import_twitter():
         ("cluster_samples", request.form.get("cluster_samples")),
         ("cluster_min_samples", request.form.get("cluster_min_samples")),
         ("cluster_selection_epsilon", request.form.get("cluster_selection_epsilon")),
+        ("import_batch_id", request.form.get("import_batch_id")),
     ]
 
     for key, value in optional_args:
@@ -297,6 +306,10 @@ def run_import_twitter():
     run_pipeline = request.form.get("run_pipeline", "true").lower() in ("1", "true", "yes", "on")
     if run_pipeline:
         command_parts.append("--run_pipeline")
+
+    incremental_links = request.form.get("incremental_links")
+    if incremental_links is not None and incremental_links.lower() in ("0", "false", "no", "off"):
+        command_parts.append("--no-incremental-links")
 
     command = " ".join(shlex.quote(part) for part in command_parts)
 

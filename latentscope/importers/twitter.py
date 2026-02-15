@@ -15,6 +15,7 @@ from urllib.request import urlopen
 COMMUNITY_ARCHIVE_BLOB_BASE = (
     "https://fabxmporizzqflnftavs.supabase.co/storage/v1/object/public/archives"
 )
+EXTRACTED_ARCHIVE_FORMAT = "x_native_extracted_v1"
 
 
 @dataclass
@@ -153,6 +154,8 @@ def _flatten_tweet(
         "display_name": display_name,
         "in_reply_to_status_id": t.get("in_reply_to_status_id_str") or t.get("in_reply_to_status_id"),
         "in_reply_to_screen_name": t.get("in_reply_to_screen_name"),
+        "quoted_status_id": t.get("quoted_status_id_str") or t.get("quoted_status_id") or None,
+        "conversation_id": t.get("conversation_id_str") or t.get("conversation_id") or None,
         "is_reply": is_reply,
         "is_retweet": is_retweet,
         "is_like": False,
@@ -199,6 +202,8 @@ def _flatten_note_tweet(
         "display_name": display_name,
         "in_reply_to_status_id": None,
         "in_reply_to_screen_name": None,
+        "quoted_status_id": None,
+        "conversation_id": None,
         "is_reply": False,
         "is_retweet": False,
         "is_like": False,
@@ -245,6 +250,8 @@ def _flatten_like(
         "display_name": display_name,
         "in_reply_to_status_id": None,
         "in_reply_to_screen_name": None,
+        "quoted_status_id": None,
+        "conversation_id": None,
         "is_reply": False,
         "is_retweet": False,
         "is_like": True,
@@ -284,6 +291,105 @@ def _collect_deduped_community_likes(payload: dict[str, Any]) -> list[Any]:
             seen_like_keys.add(dedupe_key)
             likes.append(like_obj)
     return likes
+
+
+def _ensure_int_like(value: Any, field_name: str) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError) as err:
+        raise ValueError(f"{field_name} must be an integer") from err
+
+
+def validate_extracted_archive_payload(
+    payload: Any,
+    *,
+    require_archive_format: bool = True,
+) -> dict[str, int]:
+    """
+    Validate extracted archive payload contract used by browser-local imports.
+
+    Expected top-level shape:
+      {
+        "archive_format": "x_native_extracted_v1",
+        "profile": {...},
+        "tweets": [ ... ],
+        "likes": [ ... ],
+        "tweet_count": int,
+        "likes_count": int,
+        "total_count": int
+      }
+    """
+    if not isinstance(payload, dict):
+        raise ValueError("Extracted payload must be a JSON object")
+
+    archive_format = payload.get("archive_format")
+    if require_archive_format and archive_format != EXTRACTED_ARCHIVE_FORMAT:
+        raise ValueError(
+            f"archive_format must be '{EXTRACTED_ARCHIVE_FORMAT}'"
+        )
+    if archive_format not in (None, EXTRACTED_ARCHIVE_FORMAT):
+        raise ValueError(f"Unsupported archive_format: {archive_format}")
+
+    profile = payload.get("profile")
+    if profile is None:
+        raise ValueError("Missing required field: profile")
+    if not isinstance(profile, dict):
+        raise ValueError("profile must be an object")
+
+    tweets = payload.get("tweets")
+    likes = payload.get("likes")
+    if not isinstance(tweets, list):
+        raise ValueError("tweets must be an array")
+    if not isinstance(likes, list):
+        raise ValueError("likes must be an array")
+
+    if not tweets and not likes:
+        raise ValueError("Extracted payload must include at least one tweet or like")
+
+    for idx, tweet_obj in enumerate(tweets):
+        if not isinstance(tweet_obj, dict):
+            raise ValueError(f"tweets[{idx}] must be an object")
+        tweet = tweet_obj.get("tweet", tweet_obj)
+        if not isinstance(tweet, dict):
+            raise ValueError(f"tweets[{idx}].tweet must be an object")
+        tweet_id = tweet.get("id_str") or tweet.get("id")
+        text = tweet.get("full_text") or tweet.get("text")
+        if not str(tweet_id or "").strip():
+            raise ValueError(f"tweets[{idx}] missing id_str/id")
+        if not str(text or "").strip():
+            raise ValueError(f"tweets[{idx}] missing full_text/text")
+
+    for idx, like_obj in enumerate(likes):
+        if not isinstance(like_obj, dict):
+            raise ValueError(f"likes[{idx}] must be an object")
+        like = like_obj.get("like", like_obj)
+        if not isinstance(like, dict):
+            raise ValueError(f"likes[{idx}].like must be an object")
+        tweet_id = (
+            like.get("tweetId")
+            or like.get("tweet_id")
+            or like.get("id_str")
+            or like.get("id")
+        )
+        if not str(tweet_id or "").strip():
+            raise ValueError(f"likes[{idx}] missing tweetId/tweet_id/id")
+
+    tweet_count = _ensure_int_like(payload.get("tweet_count"), "tweet_count")
+    likes_count = _ensure_int_like(payload.get("likes_count"), "likes_count")
+    total_count = _ensure_int_like(payload.get("total_count"), "total_count")
+
+    if tweet_count != len(tweets):
+        raise ValueError("tweet_count does not match tweets length")
+    if likes_count != len(likes):
+        raise ValueError("likes_count does not match likes length")
+    if total_count != tweet_count + likes_count:
+        raise ValueError("total_count must equal tweet_count + likes_count")
+
+    return {
+        "tweet_count": tweet_count,
+        "likes_count": likes_count,
+        "total_count": total_count,
+    }
 
 
 def load_native_x_archive_zip(zip_path: str) -> ImportResult:
@@ -399,12 +505,22 @@ def load_community_archive_raw(raw_data: dict[str, Any], username: str) -> Impor
 
 def load_community_extracted_json(path: str) -> ImportResult:
     """
-    Load output from scripts/twitter/download_community_archive.py --mode extract.
+    Load strict browser-extracted archive payload.
     Format:
-      {"profile": {...}, "tweets": [...], "tweet_count": N}
+      {
+        "archive_format": "x_native_extracted_v1",
+        "profile": {...},
+        "tweets": [...],
+        "likes": [...],
+        "tweet_count": N,
+        "likes_count": N,
+        "total_count": N
+      }
     """
     with open(path, "r", encoding="utf-8") as handle:
         payload = json.load(handle)
+
+    validate_extracted_archive_payload(payload, require_archive_format=True)
 
     profile = payload.get("profile", {})
     username = profile.get("username")
