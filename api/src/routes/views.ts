@@ -1,16 +1,20 @@
 import { Hono } from "hono";
+import { getTable, getTableColumns } from "../lib/lancedb.js";
 import {
   DATA_DIR,
   PUBLIC_SCOPE,
   getScopeMeta,
   isApiDataUrl,
+  jsonSafe,
   listJsonObjects,
   loadParquetRows,
   normalizeIndex,
   passthrough,
   proxyDataApi,
+  resolveLanceTableId,
   scopeContract,
   validateRequiredColumns,
+  type JsonRecord,
 } from "./dataShared.js";
 
 export const viewsRoutes = new Hono();
@@ -18,21 +22,31 @@ export const viewsRoutes = new Hono();
 viewsRoutes.get("/datasets/:dataset/scopes/:scope/parquet", async (c) => {
   const { dataset, scope } = c.req.param();
 
-  // Derive columns from contract. Don't request "index" — it's not a SERVING_COLUMN
-  // and isn't in -input.parquet (ls_index is the canonical index column).
+  // Derive columns from contract
   const contractRequired = Object.keys(scopeContract.required_columns);
   const optionalColumns = Object.keys(scopeContract.optional_columns ?? {});
   const selected = [...new Set([...contractRequired, ...optionalColumns])];
 
+  // Try LanceDB first
   try {
-    const rows = await loadParquetRows(`${dataset}/scopes/${scope}-input.parquet`, selected);
+    const tableId = await resolveLanceTableId(dataset, scope);
+    const table = await getTable(tableId);
+    const tableCols = await getTableColumns(tableId);
 
-    const normalized = rows.map((row, idx) => {
-      const lsIndex = normalizeIndex(row.ls_index) ?? idx;
-      return { ...row, ls_index: lsIndex };
+    // Select only serving columns that exist in the table (exclude vector)
+    const queryCols = selected.filter((col) => tableCols.includes(col) && col !== "vector");
+
+    const rawRows = (await table
+      .query()
+      .select(queryCols)
+      .toArray()) as JsonRecord[];
+
+    const normalized = rawRows.map((row, idx) => {
+      const safe = jsonSafe(row) as JsonRecord;
+      const lsIndex = normalizeIndex(safe.ls_index) ?? idx;
+      return { ...safe, ls_index: lsIndex };
     });
 
-    // Schema drift check: ensure all required columns are present
     const violation = validateRequiredColumns(normalized, dataset, scope);
     if (violation) {
       console.error(
@@ -43,11 +57,31 @@ viewsRoutes.get("/datasets/:dataset/scopes/:scope/parquet", async (c) => {
 
     return c.json(normalized);
   } catch {
-    if (isApiDataUrl()) {
-      const res = await proxyDataApi("GET", `/datasets/${dataset}/scopes/${scope}/parquet`);
-      return passthrough(res);
+    // Fallback: parquet file
+    try {
+      const rows = await loadParquetRows(`${dataset}/scopes/${scope}-input.parquet`, selected);
+
+      const normalized = rows.map((row, idx) => {
+        const lsIndex = normalizeIndex(row.ls_index) ?? idx;
+        return { ...row, ls_index: lsIndex };
+      });
+
+      const violation = validateRequiredColumns(normalized, dataset, scope);
+      if (violation) {
+        console.error(
+          `Schema contract violation for ${dataset}/${scope}: missing [${violation.missing_columns.join(", ")}]`,
+        );
+        return c.json(violation, 500);
+      }
+
+      return c.json(normalized);
+    } catch {
+      if (isApiDataUrl()) {
+        const res = await proxyDataApi("GET", `/datasets/${dataset}/scopes/${scope}/parquet`);
+        return passthrough(res);
+      }
+      return c.json({ error: "Scope parquet not found" }, 404);
     }
-    return c.json({ error: "Scope parquet not found" }, 404);
   }
 });
 

@@ -22,7 +22,7 @@ embedding (voyage-4-lite, 1024-dim)
 - Display UMAP metadata includes `purpose=display` and `n_components=2`
 - Cluster metadata includes `clustering_umap_id` pointing to a 10D UMAP
 - Toponymy rows include `topic_specificity`
-- Scope `-input.parquet` passes `scripts/validate_scope_artifacts.py`
+- Scope `-input.parquet` passes `tools/validate_scope_artifacts.py`
 - LanceDB Cloud table matches scope via `export_lance(cloud=True)`
 
 ---
@@ -220,7 +220,7 @@ At 212K rows: scope-input ~36MB, scope JSON ~2.6MB.
 - Column set standardized via SERVING_COLUMNS in scope.py.
 - Local .lance directories don't need CDN — LanceDB Cloud is the serving backend.
 - Partition count computed dynamically as `int(sqrt(n_rows))` in export_lance().
-- Backfill existing scopes: `uv run python3 scripts/backfill_lancedb_table_id.py <dataset_path> --execute`
+- Backfill existing scopes: `uv run python3 tools/backfill_lancedb_table_id.py <dataset_path> --execute`
 
 ---
 
@@ -252,7 +252,7 @@ These are the files the TS API must access via DATA_URL on Vercel:
 | ------ | ------ | -------- | ------ |
 | Exclude dev artifacts from CDN uploads | Smaller/cheaper CDN | Medium | Trivial — just a manifest/script |
 
-`DATA_URL` is wired to `https://data.maskys.com` (Cloudflare R2 bucket `tweetscope-data`). The TS API's CDN-first read path (`loadJsonFile()`, `loadParquetRows()`, `buildFileUrl()`) reads from this URL. Upload artifacts via `scripts/sync_cdn_r2.py` or `wrangler r2 object put --remote`.
+`DATA_URL` is wired to `https://data.maskys.com` (Cloudflare R2 bucket `tweetscope-data`). The TS API's CDN-first read path (`loadJsonFile()`, `loadParquetRows()`, `buildFileUrl()`) reads from this URL. Upload artifacts via `tools/sync_cdn_r2.py` or `wrangler r2 object put --remote`.
 ---
 
 ## Refinement Addendum
@@ -294,7 +294,7 @@ will collide without indirection.
 2. `export_lance()` reads `lancedb_table_id` from scope JSON (falls back to `scope_id` for old scopes without the field).
 3. TS API `data.ts` resolves `lancedb_table_id` from scope JSON via `resolveLanceTableId(dataset, scopeId)` before querying LanceDB (4 call sites: `/indexed`, `/query`, `/column-filter`, `/search/nn`).
 4. `lancedb.ts` unchanged — already accepts arbitrary `tableId` string.
-5. Backfill script `scripts/backfill_lancedb_table_id.py` adds `scope_uid` + `lancedb_table_id` to existing scope JSONs (dry-run by default, `--execute` to apply).
+5. Backfill script `tools/backfill_lancedb_table_id.py` adds `scope_uid` + `lancedb_table_id` to existing scope JSONs (dry-run by default, `--execute` to apply).
 
 #### B2) `-input.parquet` is required now, but not forever
 Current TS API bootstraps from this file (data.ts:564). Long-term, it can be
@@ -823,7 +823,7 @@ hundreds of scopes.
 
 - `DATA_URL` is implemented in the TS API (data.ts: `buildFileUrl()`, `loadJsonFile()`,
   `loadParquetRows()`, `asyncBufferFromUrl()`)
-- Upload script: `scripts/sync_cdn_r2.py` (implements D1 allowlist, skips D2 denylist; dry-run by default, `--execute` to apply)
+- Upload script: `tools/sync_cdn_r2.py` (implements D1 allowlist, skips D2 denylist; dry-run by default, `--execute` to apply)
 
 ### R2 credentials for upload (sync_cdn_r2.py)
 
@@ -939,8 +939,8 @@ wrangler r2 bucket domain add tweetscope-data --domain data.maskys.com --zone-id
 wrangler r2 object put tweetscope-data/{key} --file {local_path} --content-type {mime} --remote
 
 # Upload script (implements D1 allowlist, skips D2 denylist)
-uv run --env-file .env python3 scripts/sync_cdn_r2.py <dataset_path>         # dry-run
-uv run --env-file .env python3 scripts/sync_cdn_r2.py <dataset_path> --execute
+uv run --env-file .env python3 tools/sync_cdn_r2.py <dataset_path>         # dry-run
+uv run --env-file .env python3 tools/sync_cdn_r2.py <dataset_path> --execute
 ```
 
 ### Cost estimate (212K tweets, 1 dataset)
@@ -995,14 +995,14 @@ In `data.ts`, the `/parquet` route:
 4. Returns structured 500 with `{ error, dataset, scope, missing_columns, expected_contract_version }` on violation
 
 #### E3) Deploy gate validator
-`scripts/validate_scope_artifacts.py` — CLI that checks:
+`tools/validate_scope_artifacts.py` — CLI that checks:
 1. Scope JSON exists and references valid cluster label artifacts
 2. `-input.parquet` has all required columns with correct Arrow types
 3. `id` is string type (not int64)
 4. Links parquets (if present) have correct columns and string tweet IDs
 5. Exit 0 on pass, exit 1 with error list
 
-Usage: `uv run python3 scripts/validate_scope_artifacts.py <dataset_path> <scope_id>`
+Usage: `uv run python3 tools/validate_scope_artifacts.py <dataset_path> <scope_id>`
 
 #### E4) Runtime acceptance checks
 Before switching `DATA_URL` to CDN:
@@ -1043,7 +1043,7 @@ uv run python3 -m latentscope.scripts.toponymy_labels <dataset> <cluster-id>
 uv run python3 -m latentscope.scripts.scope <dataset> <embedding-id> <display-umap-id> <cluster-id> <toponymy-labels-id> "<label>" "<description>"
 
 # 6. Validate artifacts
-uv run python3 scripts/validate_scope_artifacts.py <dataset-path> <scope-id>
+uv run python3 tools/validate_scope_artifacts.py <dataset-path> <scope-id>
 
 # 7. Sync to LanceDB Cloud
 uv run --env-file .env python3 -c "
@@ -1062,7 +1062,7 @@ See section E for details. Contract files, write-time enforcement, read-time enf
 R2 bucket `tweetscope-data` is created with custom domain `https://data.maskys.com` and CORS configured for range reads. See "CDN Setup: Cloudflare R2" section for details.
 
 **Remaining:**
-1. Upload serving artifacts via `scripts/sync_cdn_r2.py` (or `wrangler r2 object put --remote`)
+1. Upload serving artifacts via `tools/sync_cdn_r2.py` (or `wrangler r2 object put --remote`)
 2. Set `DATA_URL=https://data.maskys.com` in Vercel env
 
 ##### P0.4 — LanceDB table name resolution — implemented
@@ -1072,13 +1072,13 @@ See section B1 for details. `scope_uid` + `lancedb_table_id` indirection is impl
   - `resolveLanceTableId()` — thin wrapper, used by `/indexed`, `/query`, `/column-filter`
   - `search.ts` `/nn` handler — calls `getScopeMeta()` directly to get both `lancedb_table_id` and `embedding.model_id` in one fetch
 - **Search model resolution**: `search.ts` derives the VoyageAI model from `scopeMeta.embedding.model_id` (strips `voyageai-` prefix). Fallback: `VOYAGE_MODEL` env → `voyage-4-lite`.
-- **Backfill**: `scripts/backfill_lancedb_table_id.py` adds the field to existing scope JSONs. After backfill, re-run `export_lance(cloud=True)` to create the table under the new name.
+- **Backfill**: `tools/backfill_lancedb_table_id.py` adds the field to existing scope JSONs. After backfill, re-run `export_lance(cloud=True)` to create the table under the new name.
 - **Backward compat**: Falls back to `scope_id` when `lancedb_table_id` is absent in scope JSON (old scopes).
 
 #### P1 — Pre-hosted
 
 ##### P1.1 — Deploy-manifest script (CDN sync) — implemented
-`scripts/sync_cdn_r2.py` implements the D1 allowlist:
+`tools/sync_cdn_r2.py` implements the D1 allowlist:
 - Syncs matching files from `DATA_DIR/{dataset}/` to R2 via `boto3` (S3-compat endpoint)
 - Skips D2 denylist files (embeddings, umaps, dev artifacts)
 - Preserves directory structure: `{dataset}/scopes/{scope}.json` etc.

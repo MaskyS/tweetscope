@@ -461,6 +461,66 @@ def _build_node_stats_df(
     )
 
 
+def _write_lance_edges(dataset_dir: str, dataset_id: str, edges_df: pd.DataFrame) -> None:
+    """Write edges DataFrame to a {dataset_id}__edges LanceDB table (full replace)."""
+    import lancedb
+
+    db_uri = os.path.join(dataset_dir, "lancedb")
+    os.makedirs(db_uri, exist_ok=True)
+    db = lancedb.connect(db_uri)
+    table_name = f"{dataset_id}__edges"
+
+    if edges_df.empty:
+        # Drop if it exists, then bail
+        try:
+            db.drop_table(table_name, ignore_missing=True)
+        except TypeError:
+            # older lancedb without ignore_missing
+            pass
+        print(f"No edges to write to LanceDB table '{table_name}'")
+        return
+
+    # Ensure clean types for LanceDB (no nullable int columns — fill with -1)
+    write_df = edges_df.copy()
+    for col in ("src_ls_index", "dst_ls_index"):
+        write_df[col] = pd.to_numeric(write_df[col], errors="coerce").fillna(-1).astype(int)
+
+    tbl = db.create_table(table_name, write_df, mode="overwrite")
+
+    tbl.create_scalar_index("src_tweet_id", index_type="BTREE")
+    tbl.create_scalar_index("dst_tweet_id", index_type="BTREE")
+    tbl.create_scalar_index("edge_kind", index_type="BITMAP")
+    tbl.create_scalar_index("internal_target", index_type="BITMAP")
+
+    print(f"LanceDB: wrote {len(write_df)} edges to '{table_name}' with indexes")
+
+
+def _write_lance_node_stats(dataset_dir: str, dataset_id: str, node_stats_df: pd.DataFrame) -> None:
+    """Write node_stats DataFrame to a {dataset_id}__node_stats LanceDB table (full replace)."""
+    import lancedb
+
+    db_uri = os.path.join(dataset_dir, "lancedb")
+    os.makedirs(db_uri, exist_ok=True)
+    db = lancedb.connect(db_uri)
+    table_name = f"{dataset_id}__node_stats"
+
+    if node_stats_df.empty:
+        try:
+            db.drop_table(table_name, ignore_missing=True)
+        except TypeError:
+            pass
+        print(f"No node stats to write to LanceDB table '{table_name}'")
+        return
+
+    tbl = db.create_table(table_name, node_stats_df, mode="overwrite")
+
+    tbl.create_scalar_index("tweet_id", index_type="BTREE")
+    tbl.create_scalar_index("ls_index", index_type="BTREE")
+    tbl.create_scalar_index("thread_root_id", index_type="BTREE")
+
+    print(f"LanceDB: wrote {len(node_stats_df)} node stats to '{table_name}' with indexes")
+
+
 def build_links_graph(
     dataset_id: str,
     *,
@@ -567,6 +627,14 @@ def build_links_graph(
 
     edges_df.to_parquet(edges_path, index=False)
     node_stats_df.to_parquet(node_stats_path, index=False)
+
+    # Write to LanceDB (dataset-global only, not scope-specific builds)
+    if not scope_id:
+        try:
+            _write_lance_edges(dataset_dir, dataset_id, edges_df)
+            _write_lance_node_stats(dataset_dir, dataset_id, node_stats_df)
+        except Exception as e:
+            print(f"WARNING: LanceDB write failed (parquet artifacts are fine): {e}")
 
     edge_kind_counts = {
         "reply": int((edges_df["edge_kind"] == "reply").sum()) if not edges_df.empty else 0,

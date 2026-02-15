@@ -63,6 +63,59 @@ export async function getIndexColumn(tableId: string): Promise<string> {
   return resolved;
 }
 
+// ---------------------------------------------------------------------------
+// Local LanceDB access (for graph tables written by build_links_graph.py)
+// ---------------------------------------------------------------------------
+
+const localDbs = new Map<string, lancedb.Connection>();
+
+/**
+ * Open the local LanceDB for a dataset. Graph tables ({dataset}__edges,
+ * {dataset}__node_stats) live in {DATA_DIR}/{dataset}/lancedb/.
+ */
+export async function getLocalDb(datasetDir: string): Promise<lancedb.Connection> {
+  const cached = localDbs.get(datasetDir);
+  if (cached) return cached;
+  const conn = await lancedb.connect(datasetDir);
+  localDbs.set(datasetDir, conn);
+  return conn;
+}
+
+/**
+ * Open a graph-related table. Tries local DB first (if DATA_DIR is set),
+ * then falls back to the cloud connection.
+ */
+export async function getGraphTable(
+  dataset: string,
+  tableSuffix: string,
+): Promise<lancedb.Table> {
+  const tableId = `${dataset}__${tableSuffix}`;
+  const cached = tables.get(tableId);
+  if (cached) return cached;
+
+  const dataDir = process.env.LATENT_SCOPE_DATA;
+  if (dataDir) {
+    const expandedDir = dataDir.startsWith("~/")
+      ? `${process.env.HOME ?? ""}/${dataDir.slice(2)}`
+      : dataDir;
+    const localDbPath = `${expandedDir}/${dataset}/lancedb`;
+    try {
+      const localConn = await getLocalDb(localDbPath);
+      const table = await localConn.openTable(tableId);
+      tables.set(tableId, table);
+      return table;
+    } catch {
+      // Table doesn't exist locally, try cloud
+    }
+  }
+
+  // Fallback: cloud connection
+  const conn = await getDb();
+  const table = await conn.openTable(tableId);
+  tables.set(tableId, table);
+  return table;
+}
+
 export async function vectorSearch(
   tableId: string,
   embedding: number[],

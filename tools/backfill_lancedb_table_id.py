@@ -8,7 +8,7 @@ For each scope JSON that lacks lancedb_table_id:
   - Writes the updated JSON back
 
 Usage:
-  uv run python3 scripts/backfill_lancedb_table_id.py <dataset_path>
+  uv run python3 tools/backfill_lancedb_table_id.py <dataset_path>
 
   dataset_path: full path to the dataset directory, e.g.
     ~/latent-scope-data/sheik-tweets
@@ -81,7 +81,7 @@ def backfill_dataset(dataset_path, dry_run=True):
         print("\nRe-run with --execute to apply changes.")
         print("After backfill, re-export to LanceDB Cloud:")
         print(f'  uv run --env-file .env python3 -c "')
-        print(f"from latentscope.scripts.scope import export_lance")
+        print(f"from latentscope.scripts.export_lance import export_lance")
         print(f"export_lance('<data-dir>', '{dataset_id}', '<scope-id>', cloud=True)")
         print(f'"')
 

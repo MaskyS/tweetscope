@@ -1,6 +1,6 @@
 # Refactor Plan: Twitter Knowledge Explorer
 
-Last updated: 2026-02-11
+Last updated: 2026-02-15
 
 ## 1. Product Direction (Explicit)
 
@@ -56,7 +56,7 @@ We need two progressive flows:
 
 `twitter_import -> ingest(input.parquet) -> embed -> dual UMAP -> cluster -> scope -> export_lance`
 
-Links are built separately by `build_links_graph` from `input.parquet` and written to flat files (`links/edges.parquet`, `links/node_link_stats.parquet`).
+Links are built separately by `build_links_graph` from `input.parquet` and written to both flat files (`links/edges.parquet`, `links/node_link_stats.parquet`) and LanceDB tables (`{dataset}__edges`, `{dataset}__node_stats`) with BTREE/BITMAP indexes.
 
 ## 3.2 Link model gaps
 
@@ -76,12 +76,17 @@ Resolved:
 - Edge schema uses `edge_kind` (not `edge_type`) and `edge_id` (deterministic hash) per the target entity model.
 - Browser extractor passes `quoted_status_id_str` and `conversation_id_str` through all three layers (JS extractor → Python flattener → edge builder). Native-field quote edges are now produced.
 
-## 3.3 Serving model gaps
+## 3.3 Serving model gaps — PARTIALLY RESOLVED
 
-- Read path is split across flat files + Lance table.
-- Cluster/tree bootstrap comes from scope JSON and parquet artifacts.
-- Link endpoints load full edges parquet into memory cache.
-- Data model is still influenced by latent-scope file lineage conventions.
+Resolved:
+- Graph endpoints (`/links/*`) now read from LanceDB via `graphRepo.ts` repository abstraction. No in-memory parquet cache.
+- Flask graph endpoints (thread, quotes, edges, node-stats) removed from `datasets.py`; Flask `datasets_bp` + `search_bp` registered only in studio mode.
+- `views.ts` bootstrap tries LanceDB first, falls back to `scope-input.parquet`.
+
+Remaining:
+- Endpoint-local proxy fallback chains (`isApiDataUrl()` → `proxyDataApi()`) still present in every route module. Must be removed at hard cutover.
+- Cluster/tree bootstrap still reads scope JSON artifacts (not yet in LanceDB `cluster_nodes` table).
+- `dataShared.ts` (504 LOC) still contains file-loading plumbing; dead graph helpers removed but file I/O, caching, proxy functions remain.
 
 ## 3.4 Progressive import gaps
 
@@ -99,9 +104,9 @@ This baseline focuses on what makes engineering work hard: mental branching, hid
 
 ### Baseline A: One file owns too many bounded contexts — RESOLVED
 
-`api/src/routes/data.ts` was a 1,241-line monolith. Now split into domain modules: `catalog.ts` (141), `views.ts` (139), `graph.ts` (245), `query.ts` (202), `dataShared.ts` (561). `data.ts` is a 25-line thin router.
+`api/src/routes/data.ts` was a 1,241-line monolith. Now split into domain modules: `catalog.ts` (141), `views.ts` (173), `graph.ts` (174), `query.ts` (202), `dataShared.ts` (504). `data.ts` is a 25-line thin router. New `graphRepo.ts` (222 LOC) provides repository-pattern LanceDB access for graph domain.
 
-Remaining concern: `dataShared.ts` at 561 LOC is the new largest file and may need further decomposition into repository/service layers.
+`dataShared.ts` reduced from 561 → 504 LOC after removing graph-related helpers (`getEdges`, `getNodeStatsRows`, `getLinksMeta` and their caches). Remaining contents: file I/O, caching, proxy fallback, SQL helpers, contract validation — all shared across route modules.
 
 ### Baseline B: Per-request mode branching is high — PARTIALLY RESOLVED
 
@@ -113,11 +118,12 @@ Identity and graph fields are translated in multiple layers:
 
 - `scope.py` builds `ls_index` into scope artifacts (`latentscope/scripts/scope.py`)
 - links artifacts store both tweet ids and scope indices (`latentscope/scripts/build_links_graph.py`)
+- LanceDB graph tables use `-1` as null sentinel for `ls_index` (mapped back to `null` by `graphRepo.ts`)
 - API re-normalizes index fields (now across domain modules in `api/src/routes/`)
 
 Frontend translation layer reduced: `ScopeContext.jsx` deleted, `useNodeStats.ts` rewritten as strict server-contract consumer (98 LOC, no client-side graph recompute). `apiService.js` replaced by typed domain clients.
 
-Remaining: pipeline-side `ls_index` multiplicity still exists (scope.py, build_links_graph.py). Resolves with LanceDB identity unification (Milestone D).
+Remaining: pipeline-side `ls_index` multiplicity still exists (scope.py, build_links_graph.py). LanceDB graph tables carry `ls_index` alongside `tweet_id` for frontend compatibility. Resolves with LanceDB identity unification (Milestone D).
 
 ### Baseline D: Policy logic is split across UI + backend — RESOLVED
 
@@ -127,11 +133,15 @@ Privacy is now enforced at the server boundary:
 - `jobs.py` validates all `community_json` uploads with `validate_extracted_archive_payload()` (strict `archive_format`, field presence, count consistency).
 - `Home.jsx` always extracts in-browser; the privacy toggle is removed. The frontend cannot weaken the server-side policy.
 
-### Baseline E: Orchestration and side effects are tightly coupled
+### Baseline E: Orchestration and side effects are tightly coupled — PARTIALLY RESOLVED
 
-Examples:
+Resolved:
+- `export_lance` extracted from `scope.py` to standalone `export_lance.py` (84 LOC).
+- `scope.py` no longer writes intermediate `{scope_id}.parquet` — goes straight to `-input.parquet`.
+- `build_links_graph.py` graph builder functions already decomposed (`_build_edges_for_sources`, `_refresh_edge_targets`, `_build_node_stats_df`, `_canonicalize_edges_df`); now also writes to LanceDB tables as a side-effect of the build step.
 
-- `scope()` in `latentscope/scripts/scope.py` performs metadata assembly, label-tree transformation, parquet generation, contract validation, and Lance export in one orchestration path.
+Remaining:
+- `scope()` in `latentscope/scripts/scope.py` (454 LOC) still performs metadata assembly, label-tree transformation, parquet generation, contract validation, and Lance export in one orchestration path.
 - `jobs.py` has 25 write routes (including toponymy and upload_dataset) and 51+ command-construction fragments, mixing policy, request parsing, shell command assembly, and process supervision.
 
 Why this matters:
@@ -212,7 +222,7 @@ Acceptance check:
 
 ## 3.7 Before/After diagrams
 
-### 3.7.1 Data serving topology (before)
+### 3.7.1 Data serving topology (before — pre-domain-split)
 
 ```text
 Browser
@@ -226,6 +236,32 @@ Result:
 - one request surface backed by mixed storage contracts
 - endpoint behavior changes by mode/path
 - graph semantics partly reconstructed in frontend fallbacks
+```
+
+### 3.7.1b Data serving topology (current — post-domain-split, pre-cutover)
+
+```text
+Browser
+  -> TS API (domain modules: catalog/views/graph/query)
+      -> graph.ts → graphRepo.ts → LanceDB local tables ({dataset}__edges, __node_stats)
+         fallback: proxy to DATA_URL if Lance fails
+      -> views.ts → LanceDB scope table (via lancedb_table_id)
+         fallback: scope-input.parquet from disk/CDN
+         fallback: proxy to DATA_URL
+      -> query.ts → LanceDB Cloud (vector search, filters)
+         fallback: proxy to DATA_URL
+      -> catalog.ts → scope JSON + meta JSON from disk/CDN
+         fallback: proxy to DATA_URL
+  -> Flask (studio mode only)
+      -> datasets_bp: scope parquet, cluster labels, embeddings list
+      -> search_bp: vector search (studio only)
+      -> NOT registered: graph/link endpoints (deleted from datasets.py)
+
+Result:
+- graph domain fully on LanceDB (primary path)
+- views bootstrap LanceDB-first with file fallback
+- proxy fallback chains still present everywhere (must remove at cutover)
+- Flask no longer serves graph data; datasets_bp + search_bp gated to studio mode
 ```
 
 ### 3.7.2 Data serving topology (after, no backward-compat)
@@ -248,7 +284,7 @@ Result:
 - no endpoint-local legacy fallback/proxy branching
 ```
 
-### 3.7.3 Build pipeline (before)
+### 3.7.3 Build pipeline (before — pre-refactor)
 
 ```text
 twitter_import
@@ -256,9 +292,26 @@ twitter_import
   -> embed
   -> dual umap
   -> cluster
-  -> scope (builds scope.json + scope.parquet + scope-input.parquet)
-  -> export_lance
-  -> build_links_graph (separate links/*.parquet path)
+  -> scope (builds scope.json + scope.parquet + scope-input.parquet + export_lance inline)
+  -> build_links_graph (separate links/*.parquet only)
+```
+
+### 3.7.3b Build pipeline (current)
+
+```text
+twitter_import
+  -> ingest(input.parquet)
+  -> embed
+  -> dual umap
+  -> cluster
+  -> scope (builds scope.json + scope-input.parquet; calls export_lance.py)
+     - no longer writes intermediate {scope_id}.parquet
+     - export_lance.py extracted to standalone module (84 LOC)
+  -> build_links_graph
+     - writes links/*.parquet (backward compat)
+     - writes LanceDB tables: {dataset}__edges, {dataset}__node_stats
+       with BTREE indexes (src/dst_tweet_id, tweet_id, ls_index, thread_root_id)
+       with BITMAP indexes (edge_kind, internal_target)
 ```
 
 ### 3.7.4 Build pipeline (after, staged + incremental)
@@ -274,12 +327,12 @@ extract (client only)
   -> optional export bundle (for backup/debug only)
 ```
 
-### 3.7.5 Deployment stack topology (before)
+### 3.7.5 Deployment stack topology (before — pre-refactor)
 
 ```text
 User Browser
   -> Vercel `web-demo` / `web-app` (React/Vite static app)
-      -> Vercel `api-demo` / `api-app` (Hono Node functions)
+      -> Vercel `api-demo` / `api-app` (Hono Node functions, single data.ts monolith)
           -> DATA_URL (Cloudflare R2 custom domain, e.g. `https://data.maskys.com`)
              reads scope/input/links parquet + json artifacts
           -> LanceDB Cloud (subset of routes: indexed/query/filter/search)
@@ -290,12 +343,38 @@ Write/build path (separate):
   -> Flask jobs endpoints (`latentscope/server/jobs.py`)
       -> Python CLI pipeline (`twitter_import.py`, `scope.py`, `build_links_graph.py`)
       -> filesystem artifacts + LanceDB export
+  -> Flask datasets_bp + search_bp (duplicate read endpoints)
 ```
 
 Key implementation reality (before):
 - runtime serving depends on both R2 artifact availability and LanceDB availability
 - route behavior differs by env/mode (`DATA_DIR`, `DATA_URL`, proxy mode)
 - Vercel API layer is not fully isolated from legacy serving compatibility branches
+- Flask duplicated most TS API read endpoints for local dev
+
+### 3.7.5b Deployment stack topology (current)
+
+```text
+User Browser
+  -> Vercel `web-demo` / `web-app` (React/Vite static app)
+      -> Vercel `api-demo` / `api-app` (Hono domain modules)
+          catalog.ts  -> scope JSON + meta from disk/CDN; proxy fallback
+          views.ts    -> LanceDB scope table (primary); parquet fallback; proxy fallback
+          graph.ts    -> graphRepo.ts -> LanceDB local tables (primary); proxy fallback
+          query.ts    -> LanceDB Cloud (vector search, filters); proxy fallback
+          -> optional local DATA_DIR (LATENT_SCOPE_DATA) for LanceDB local tables
+
+Write/build path:
+  -> Flask jobs endpoints (`latentscope/server/jobs.py`)
+      -> Python CLI pipeline → filesystem artifacts + LanceDB local + optional Cloud export
+  -> Flask datasets_bp + search_bp (studio mode ONLY, not production)
+```
+
+Key implementation reality (current):
+- graph domain fully on LanceDB (no parquet edge cache in API process)
+- views bootstrap LanceDB-first but still carries file + proxy fallback chains
+- Flask graph endpoints deleted; Flask read blueprints gated to studio mode
+- proxy fallback chains still wired in every TS route module (must remove at cutover)
 
 ### 3.7.6 Deployment stack topology (after hard cutover)
 
@@ -385,7 +464,7 @@ Removal gate:
 - first-screen render meets latency/bytes targets with the Lance-backed single-payload endpoint
 - frontend no longer depends on the parquet file specifically, but still gets all points in one fetch
 
-### Fence C: `links/*.parquet` graph artifacts
+### Fence C: `links/*.parquet` graph artifacts — RUNTIME DECOUPLED
 
 Why it exists:
 - simple graph snapshot from tweet export fields (reply/url links)
@@ -395,13 +474,16 @@ Why it exists:
 What to keep:
 - optional debug/export snapshot for audits
 
-What changes:
-- runtime graph endpoints query Lance `edges`/`node_stats` directly
-- edge identity and provenance become first-class contracts (`record_id`, `edge_kind`, `provenance`)
+What changed (2026-02-15):
+- `build_links_graph.py` now writes to both parquet AND LanceDB tables (`{dataset}__edges`, `{dataset}__node_stats`)
+- `graphRepo.ts` reads exclusively from LanceDB tables — no parquet reads in the graph serving path
+- `graph.ts` routes use `graphRepo` as primary; proxy fallback is the only non-Lance path
+- Flask graph endpoints removed from `datasets.py`; `datasets_bp` is studio-only
+- Parquet artifacts are now write-only from the graph build step; no runtime consumer in the TS API
 
-Removal gate:
-- thread/neighbor/quote routes pass correctness and latency tests on Lance-only path
-- no frontend/API semantic fallback depending on links parquet
+Remaining removal gate:
+- remove proxy fallback in `graph.ts` (last non-Lance path)
+- correctness + latency benchmarks on Lance-only path (section 10.5.1)
 
 ### Fence D: Flat file lineage (`embeddings/`, `umaps/`, `clusters/`, `scopes/`)
 
@@ -451,7 +533,7 @@ Before removing a legacy artifact from runtime:
 This section maps responsibility at file level.  
 Goal: reduce “how many files I must load in my head” for one product change.
 
-### 3.9.1 Current file map (before)
+### 3.9.1 File map (before — pre-domain-split)
 
 ```text
 api/
@@ -474,6 +556,51 @@ web/src/
   contexts/ScopeContext.jsx         # bootstrap + cluster stats mutation + hierarchy build
   hooks/useNodeStats.js             # endpoint read + edge-derived fallback recomputation
   components/Home.jsx               # browser-only extract + upload (zip rejection is server-enforced)
+```
+
+### 3.9.1b File map (current — 2026-02-15)
+
+```text
+api/                                  # Production serving API (Hono, Vercel)
+  src/routes/data.ts                  # thin router (25 LOC)
+  src/routes/catalog.ts               # datasets/views metadata (141 LOC)
+  src/routes/views.ts                 # points/bootstrap — LanceDB-first, parquet fallback (173 LOC)
+  src/routes/graph.ts                 # neighbors/thread/quotes — LanceDB via graphRepo (174 LOC)
+  src/routes/query.ts                 # indexed/query/filter/search (202 LOC)
+  src/routes/dataShared.ts            # shared utilities, file I/O, proxy (504 LOC)
+  src/lib/lancedb.ts                  # LanceDB connection + getLocalDb + getGraphTable (115+ LOC)
+  src/lib/graphRepo.ts                # NEW: LanceGraphRepo — graph data access layer (222 LOC)
+  src/__tests__/graph-parity.test.ts  # NEW: graph contract shape tests (206 LOC)
+
+web/src/                              # React frontend (Vite + Deck.GL, Vercel)
+  api/{base,catalog,view,graph,query}Client.ts  # typed domain clients (replaces apiService.js)
+  hooks/useNodeStats.ts               # strict server-contract consumer (98 LOC)
+  components/Home.jsx                 # browser-only extract + upload
+
+latentscope/server/                   # Python studio server (Flask)
+  app.py                              # Flask app — datasets_bp + search_bp now studio-only
+  jobs.py                             # import API + job runner (unchanged)
+  datasets.py                         # -295 LOC: graph endpoints deleted, scope parquet + cluster labels remain (studio-only)
+
+latentscope/scripts/                  # Python pipeline scripts
+  twitter_import.py                   # (unchanged)
+  scope.py                            # 454 LOC: export_lance extracted, intermediate parquet eliminated
+  export_lance.py                     # NEW: extracted from scope.py (84 LOC)
+  build_links_graph.py                # +68 LOC: now writes to LanceDB tables with indexes (731 LOC total)
+
+tools/                                # Repo-level operational scripts (formerly scripts/)
+  eval_hierarchy_labels.py            # pipeline eval + bakeoff comparison
+  backfill_lancedb_table_id.py        # backfill scope JSONs with lancedb_table_id
+  sync_cdn_r2.py                      # sync artifacts to Cloudflare R2
+  validate_scope_artifacts.py         # scope artifact validation
+  twitter/                            # twitter data utilities
+
+contracts/                            # JSON schemas + shared type contracts
+documentation/                        # docs, deploy guides, internal notes + plans
+  notes/                              # planning docs (refactor-plan, deploy-file-plan, etc.)
+  plans/                              # structured plans (repo-structure-plan)
+experiments/                          # prototypes and scratch apps
+  prototype/                          # carousel feed prototype (formerly prototype/)
 ```
 
 ### 3.9.2 Why this is cognitively expensive
@@ -499,26 +626,18 @@ This is exactly the kind of distributed coupling that drives cognitive complexit
 ### 3.9.3 Target file map (current state → remaining target)
 
 ```text
-api/                                    # DONE: domain split
-  src/routes/data.ts                    #   thin router (25 LOC)
-  src/routes/catalog.ts                 #   datasets/views metadata (141 LOC)
-  src/routes/views.ts                   #   points/cluster-tree/bootstrap (139 LOC)
-  src/routes/graph.ts                   #   neighbors/thread/quotes (245 LOC)
-  src/routes/query.ts                   #   indexed/query/filter/search (202 LOC)
-  src/routes/dataShared.ts              #   shared utilities (561 LOC) — review for decomposition
+api/                                    # DONE: domain split + graph repository
+  src/routes/data.ts                    #   DONE: thin router (25 LOC)
+  src/routes/catalog.ts                 #   DONE: datasets/views metadata (141 LOC)
+  src/routes/views.ts                   #   DONE: LanceDB-first bootstrap (173 LOC)
+  src/routes/graph.ts                   #   DONE: LanceDB via graphRepo (174 LOC)
+  src/routes/query.ts                   #   DONE: indexed/query/filter/search (202 LOC)
+  src/routes/dataShared.ts              #   DONE: shared utilities (504 LOC) — could decompose further
+  src/lib/lancedb.ts                    #   DONE: connection + local DB + graph table helpers
+  src/lib/graphRepo.ts                  #   DONE: LanceGraphRepo repository (222 LOC)
+  src/__tests__/graph-parity.test.ts    #   DONE: contract shape tests (206 LOC)
   src/routes/import.ts                  # TODO: extracted payload ingest entry
-  src/repositories/lance/*.ts           # TODO: table-specific access (records/edges/views)
-  src/contracts/*.ts                    # TODO: request/response + schema contracts
-  src/lib/lancedb.ts                    #   connection/index helpers (kept)
-
-latentscope/pipeline/                   # TODO: new package boundary for stage code
-  stages/normalize.py
-  stages/upsert_records.py
-  stages/upsert_edges.py
-  stages/embed_delta.py
-  stages/recompute_node_stats.py
-  stages/build_view.py
-  io/export_bundle.py                   #   optional parquet/json exports only
+  src/contracts/*.ts                    # TODO: request/response + schema contracts (lower priority)
 
 web/src/                                # DONE: domain clients + context cleanup
   api/baseClient.ts                     #   base URL + shared fetch (23 LOC)
@@ -529,22 +648,50 @@ web/src/                                # DONE: domain clients + context cleanup
   api/types.ts                          #   shared types
   hooks/useNodeStats.ts                 #   server-contract only (98 LOC)
   components/Home.jsx                   #   extracted-json-only upload path for hosted mode
+
+latentscope/scripts/                    # Pipeline scripts (Python package)
+  export_lance.py                       #   DONE: extracted from scope.py (84 LOC)
+  build_links_graph.py                  #   DONE: writes to LanceDB + parquet (731 LOC)
+
+latentscope/pipeline/                   # TODO: new package boundary for stage code
+  stages/normalize.py
+  stages/upsert_records.py
+  stages/upsert_edges.py
+  stages/embed_delta.py
+  stages/recompute_node_stats.py
+  stages/build_view.py
+  io/export_bundle.py                   #   optional parquet/json exports only
+
+tools/                                  # DONE: repo-level operational scripts (formerly scripts/)
+  eval_hierarchy_labels.py              #   pipeline eval + bakeoff comparison
+  backfill_lancedb_table_id.py          #   backfill scope JSONs with lancedb_table_id
+  sync_cdn_r2.py                        #   sync artifacts to Cloudflare R2
+  validate_scope_artifacts.py           #   scope artifact validation
+  twitter/                              #   twitter data utilities
+
+contracts/                              # JSON schemas + shared type contracts
+documentation/                          # DONE: user docs, deploy guides, notes + plans
+  notes/                                #   planning docs (refactor-plan, deploy-file-plan, etc.)
+  plans/                                #   structured plans (repo-structure-plan)
+experiments/                            # DONE: prototypes (formerly prototype/)
 ```
 
 ### 3.9.4 File action matrix (keep/rewrite/new/delete)
 
 | File | Status | Notes |
 |---|---|---|
-| `api/src/routes/data.ts` | **DONE** — thin router (25 LOC) | Split into `catalog.ts` (141), `views.ts` (139), `graph.ts` (245), `query.ts` (202), `dataShared.ts` (561) |
+| `api/src/routes/data.ts` | **DONE** — thin router (25 LOC) | Split into `catalog.ts` (141), `views.ts` (173), `graph.ts` (174), `query.ts` (202), `dataShared.ts` (504) |
 | `api/src/routes/search.ts` | Merge into `query.ts` | Overlaps query/search contract logic |
-| `api/src/routes/dataShared.ts` | **NEW** — needs review | 561 LOC shared utilities; may need further decomposition |
-| `api/src/lib/lancedb.ts` | Keep + narrow | Useful shared DB adapter |
-| `latentscope/server/app.py` | Remove from hosted runtime | Legacy Flask serving composition |
-| `latentscope/server/datasets.py` | Delete or studio-only | Legacy read endpoints → `catalog.ts` |
-| `latentscope/server/search.py` | Delete or studio-only | Legacy search path → `query.ts` |
+| `api/src/routes/dataShared.ts` | **DONE** — reduced to 504 LOC | Graph helpers removed (`getEdges`, `getNodeStatsRows`, `getLinksMeta`); remaining: file I/O, proxy, SQL helpers |
+| `api/src/lib/lancedb.ts` | **DONE** — expanded | Added `getLocalDb()`, `getGraphTable()` for local LanceDB access |
+| `api/src/lib/graphRepo.ts` | **DONE** — new (222 LOC) | `LanceGraphRepo`: graph data access layer via LanceDB tables |
+| `latentscope/server/app.py` | **DONE** — studio-only gating | `datasets_bp` + `search_bp` registered only when `APP_MODE == "studio"` |
+| `latentscope/server/datasets.py` | **DONE** — studio-only, graph endpoints deleted | -295 LOC: all `/links/*` endpoints removed; scope parquet + cluster labels remain |
+| `latentscope/server/search.py` | **DONE** — studio-only | Registered only when `APP_MODE == "studio"` |
 | `latentscope/server/jobs.py` | Rewrite/split | Policy + orchestration + command assembly coupled → `import.ts` + pipeline runner |
-| `latentscope/scripts/scope.py` | Decompose | Many side effects in one path → stage modules under `latentscope/pipeline/stages/` |
-| `latentscope/scripts/build_links_graph.py` | Replace runtime role | File artifact builder only → `upsert_edges.py` + `recompute_node_stats.py` |
+| `latentscope/scripts/scope.py` | Partially done — decompose further | `export_lance` extracted, intermediate parquet eliminated; 454 LOC orchestration remains |
+| `latentscope/scripts/export_lance.py` | **DONE** — new (84 LOC) | Extracted from scope.py; standalone LanceDB export function |
+| `latentscope/scripts/build_links_graph.py` | **DONE** — LanceDB writer | +68 LOC: writes `{dataset}__edges` + `__node_stats` tables with indexed columns |
 | `latentscope/scripts/twitter_import.py` | Split responsibilities | Import source parsing coupled to full pipeline run → ingest route + stage orchestrator |
 | `web/src/lib/apiService.js` | **DONE** — deleted | Replaced by `web/src/api/{base,catalog,view,graph,query}Client.ts`; thin `.ts` re-export for legacy consumers |
 | `web/src/contexts/ScopeContext.jsx` | **DONE** — deleted | Bootstrap/mutation/aggregation removed; consumers updated |
@@ -1112,7 +1259,7 @@ Decision: **Likes get their own separate map, not mixed with posted tweets. Like
 - Likes are ~80% of archive volume but dilute cluster quality when mixed with authored content.
 - Likes are stored in `records` (same table, `record_type='like'`) from day one.
 - Default `build_view` excludes likes: `record_type IN ('tweet', 'note_tweet')`.
-- Likes-specific visualization (separate map, own UMAP/clusters/labels) is a post-launch feature. See `likes-view-plan.md` for detailed implementation plan.
+- Likes-specific visualization (separate map, own UMAP/clusters/labels) is a post-launch feature. See `documentation/notes/likes-view-plan.md` for detailed implementation plan.
 
 ## 10. Testing and Validation Plan
 
@@ -1194,7 +1341,7 @@ Implemented:
 Remaining:
 - **Tests for acceptance/rejection paths.** The validator and zip rejection have zero test coverage. This is the top priority remaining item.
 
-### Milestone B: Link model v2 — schema + native-field quotes done, LanceDB remaining
+### Milestone B: Link model v2 — DONE (schema, LanceDB tables, serving)
 
 Implemented:
 - Edge schema: `edge_kind`, `edge_id` (deterministic hash), `provenance` columns. Schema version `links-v2`.
@@ -1202,11 +1349,15 @@ Implemented:
 - Incremental edge rebuild (`--incremental` + `--changed_tweet_id` flags).
 - Browser extractor passes `quoted_status_id_str` and `conversation_id_str` through JS extractor → Python flattener → `input.parquet`.
 - Native-field quote edges (`provenance: native_field`) produced by edge builder with precedence over URL-extracted quotes.
+- **NEW (2026-02-15):** `build_links_graph.py` writes `{dataset}__edges` and `{dataset}__node_stats` LanceDB tables with BTREE/BITMAP indexes.
+- **NEW:** `graphRepo.ts` (222 LOC) provides `LanceGraphRepo` — repository-pattern access to LanceDB graph tables.
+- **NEW:** `graph.ts` routes use `lanceGraphRepo` as primary data source. Flask graph endpoints deleted from `datasets.py`.
+- **NEW:** `dataShared.ts` cleaned of `getEdges`, `getNodeStatsRows`, `getLinksMeta` and their in-memory caches (-57 LOC).
 
 Remaining:
 - Add `tweet_link` as a separate edge kind for status URLs not captured as quotes.
-- Write edges + node stats to LanceDB tables (currently parquet-only).
-- Switch `/links/*` endpoints to Lance-only read.
+- Remove proxy fallback chains in `graph.ts` (last non-Lance path — deferred to cutover).
+- Graph correctness + latency benchmarks (section 10.5.1).
 
 ### Milestone C: Progressive import core — upsert done, tests remaining
 
@@ -1220,11 +1371,18 @@ Remaining:
 
 Gotcha: upsert currently rewrites full `input.parquet` on every import. This is O(n) for the write step — acceptable for now but must be replaced by LanceDB `merge_insert` in Milestone D.
 
-### Milestone D: View tables + serving pivot (2 weeks)
+### Milestone D: View tables + serving pivot — PARTIALLY STARTED
 
-- Materialize `views`, `view_points`, `cluster_nodes` from current pipeline outputs.
-- Add view endpoints and migrate Explore bootstrap/reads.
-- Remove legacy scope-parquet serving contracts from production read path.
+Implemented:
+- `views.ts` now tries LanceDB first for scope parquet bootstrap (`resolveLanceTableId` → `getTable` → query columns), falls back to `scope-input.parquet`.
+- `export_lance.py` extracted as standalone module (84 LOC); called from `scope.py` to write scope data to LanceDB.
+- `scope.py` no longer writes intermediate `{scope_id}.parquet` — goes straight to `-input.parquet`.
+
+Remaining:
+- Materialize `views`, `view_points`, `cluster_nodes` as separate LanceDB tables (currently all data in one scope table).
+- Add view-specific endpoints (view meta, cluster tree, points).
+- Remove parquet fallback from `views.ts` production path.
+- Remove legacy `scope-input.parquet` as runtime serving contract.
 
 ### Milestone E: Performance + cleanup (1 week)
 
@@ -1239,10 +1397,10 @@ Do not mark this refactor complete until all are true:
 1. Each production endpoint has one authoritative data-source decision and no endpoint-local legacy proxy fallback chain.
 2. ~~Serving modules are split by domain boundary (`catalog`, `views`, `graph`, `query`) with no mixed-domain ownership in one module.~~ **DONE** — `data.ts` split into `catalog.ts`, `views.ts`, `graph.ts`, `query.ts`. Frontend clients split into `web/src/api/` by domain.
 3. ~~Hosted import rejects raw zip by policy at API boundary.~~ **DONE** — `jobs.py` rejects `source_type=zip` with 400; `validate_extracted_archive_payload()` enforces contract on all uploads.
-4. `scope()` orchestration is decomposed and independently testable by stage.
-5. Graph endpoints run on LanceDB edges/node-stats in production with no flat-file fallback path.
+4. `scope()` orchestration is decomposed and independently testable by stage. *(Partially done: `export_lance` extracted, intermediate parquet eliminated. 454 LOC orchestration remains.)*
+5. ~~Graph endpoints run on LanceDB edges/node-stats as primary data source.~~ **DONE** — `graphRepo.ts` reads from `{dataset}__edges` and `{dataset}__node_stats` LanceDB tables. Flask graph endpoints deleted. *(Proxy fallback chains remain in `graph.ts` — must be removed at hard cutover for criterion 1.)*
 6. Progressive import tests prove incremental equivalence against full import baselines.
-7. Flat-file artifacts are explicitly classified as either bootstrap/export, not hidden runtime dependencies.
+7. Flat-file artifacts are explicitly classified as either bootstrap/export, not hidden runtime dependencies. *(Partially done: graph parquet is now write-only from build step, no TS API consumer. `scope-input.parquet` still consumed as fallback by `views.ts`.)*
 8. ~~Frontend no longer recomputes core graph semantics as fallback for missing backend contracts.~~ **DONE** — `ScopeContext.jsx` deleted; `useNodeStats.ts` rewritten as strict server-contract consumer.
 
 ## 14. Immediate Next Steps
@@ -1254,24 +1412,45 @@ Do not mark this refactor complete until all are true:
 
 ### P1: File refactoring — DONE
 
-All four P1 targets completed (in working tree, not yet committed):
+All four P1 targets completed and committed:
 
 - ~~Split `api/src/routes/data.ts`~~ → `catalog.ts`, `views.ts`, `graph.ts`, `query.ts`, `dataShared.ts`. Monolith is now a 25-line thin router.
 - ~~Split `web/src/lib/apiService.js`~~ → `web/src/api/{base,catalog,view,graph,query}Client.ts` + `types.ts`. Thin `.ts` re-export for legacy consumers.
 - ~~Rewrite `web/src/contexts/ScopeContext.jsx`~~ → deleted. Consumers updated.
 - ~~Rewrite `web/src/hooks/useNodeStats.js`~~ → rewritten as `useNodeStats.ts` (98 LOC). Strict server-contract consumer.
 
-Follow-up: review `dataShared.ts` (561 LOC) for further decomposition.
+### P1.5: Graph LanceDB pivot — DONE (2026-02-15)
 
-### P2: Pipeline decomposition
+Graph serving fully migrated to LanceDB as primary data source:
 
-3. **Decompose `latentscope/scripts/scope.py`** — metadata assembly, label-tree transforms, parquet builds, and Lance export in one path. Split into stage modules under `latentscope/pipeline/stages/` (Target E).
+- ~~Write edges + node stats to LanceDB tables~~ → `build_links_graph.py` writes `{dataset}__edges`, `{dataset}__node_stats` with BTREE/BITMAP indexes.
+- ~~Create graph repository abstraction~~ → `graphRepo.ts` (222 LOC) `LanceGraphRepo` class.
+- ~~Switch graph.ts to LanceDB~~ → all 5 graph routes use `lanceGraphRepo` as primary.
+- ~~Remove Flask graph endpoints~~ → deleted from `datasets.py` (-295 LOC).
+- ~~Clean dataShared.ts graph helpers~~ → removed `getEdges`, `getNodeStatsRows`, `getLinksMeta` + caches (-57 LOC).
+- ~~Gate Flask read blueprints~~ → `datasets_bp` + `search_bp` studio-only in `app.py`.
+- ~~LanceDB-first views bootstrap~~ → `views.ts` tries LanceDB scope table before parquet fallback.
+- ~~Extract export_lance~~ → standalone `export_lance.py` (84 LOC).
+- ~~Eliminate intermediate parquet~~ → `scope.py` no longer writes `{scope_id}.parquet`.
+
+Net impact: **-35 lines of real code**, -295 lines of Flask graph duplication, graph domain fully on LanceDB.
+
+### P2: Pipeline decomposition (next)
+
+3. **Decompose `latentscope/scripts/scope.py`** (454 LOC) — metadata assembly, label-tree transforms, parquet builds, and Lance export in one path. Split into stage modules under `latentscope/pipeline/stages/` (Target E).
 4. **Split `latentscope/server/jobs.py`** — 25 write routes, 51+ command fragments mixing policy, parsing, shell assembly, and process supervision. Split into `api/src/routes/import.ts` + pipeline runner service.
 5. **Split `latentscope/scripts/twitter_import.py`** — import source parsing coupled to full pipeline run. Separate ingest route from stage orchestrator.
 
 ### P3: Validation
 
 6. **Incremental import tests** — import 2018 only, then 2019 incremental, verify no duplicates, verify edge counts, verify batch manifests.
+7. **Graph correctness tests** — reply/quote edge provenance, thread traversal, bidirectional neighbor symmetry. Shape tests exist (`graph-parity.test.ts`); functional/integration tests needed.
+
+### P4: Hard cutover prerequisites
+
+8. **Remove proxy fallback chains** — strip `isApiDataUrl()` → `proxyDataApi()` blocks from `graph.ts`, `views.ts`, `catalog.ts`, `query.ts`. Dead code: `isApiDataUrl()`, `proxyDataApi()`, `passthrough()` in `dataShared.ts`.
+9. **Benchmark Lance vs parquet** (section 10.5.1) — p95 latency validation on `sheik-tweets` and `visakanv` datasets.
+10. **Decompose `dataShared.ts`** (504 LOC) — split into `storage.ts`, `contracts.ts`, `query-builders.ts`. Lower priority; acceptable as-is.
 
 ## 15. Lance/LanceDB docs used for constraints
 

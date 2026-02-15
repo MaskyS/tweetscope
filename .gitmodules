@@ -1,0 +1,4 @@
+[submodule "toponymy"]
+	path = toponymy
+	url = https://github.com/MaskyS/toponymy.git
+	branch = latent-scope-mods

@@ -91,12 +91,7 @@ ls.ingest("dadabase", df, text_column="joke")
 ls.serve()
 ```
 
-See these notebooks for detailed examples of using the Python interface to prepare and load data.
-
-- [dvs-survey](notebooks/dvs-survey.ipynb) - A small test dataset of 700 rows to quickly illustrate the process. This notebook shows how you can do every step of the process with the Python interface.
-- [dadabase](notebooks/dadabase.ipynb) - A more interesting (and funny) dataset of 50k rows. This notebook shows how you can preprocess a dataset, ingest it into latentscope and then use the web interface to complete the process.
-- [dolly15k](notebooks/dolly15k.ipynb) - Grab data from HuggingFace datasets and ingest into the process.
-- [emotion](notebooks/emotion.ipynb) - 400k rows of emotional tweets.
+See the [upstream repository](https://github.com/enjalot/latent-scope) for notebook examples of using the Python interface to prepare and load data.
 
 ### Command line quick start
 
@@ -130,11 +125,49 @@ ls-scope datavis-misunderstood cluster-001-labels-001 "E5 demo" "E5 embeddings s
 ls-serve
 ```
 
-### Repository overview
+### Repository structure
 
-This repository is currently meant to run locally, with a React frontend that communicates with a python server backend. We support several popular open source embedding models that can run locally as well as proprietary API embedding services. Adding new models and services should be quick and easy.
+```
+.
+├─ api/                 # Production serving API (Hono, deployed to Vercel)
+├─ web/                 # React frontend (Vite + Deck.GL, deployed to Vercel)
+├─ latentscope/         # Python package: studio server + pipeline scripts
+├─ contracts/           # JSON schemas + shared type contracts
+├─ documentation/       # User docs, deploy guides, internal notes + plans
+├─ tools/               # Repo-level operational scripts (eval, backfill, sync)
+├─ experiments/         # Prototypes and scratch apps
+├─ toponymy/            # Submodule: cluster labeling library (git submodule)
+├─ reports/             # Output artifacts
+└─ data/                # Sample/static data
+```
+
+### Common commands
+
+```bash
+# Frontend dev server (port 5173)
+cd web && npm run dev
+
+# Python studio server
+ls-serve ~/latent-scope-data
+
+# Build frontend for packaging
+cd web && npx vite build
+
+# Run pipeline eval
+uv run python3 tools/eval_hierarchy_labels.py --dataset <id>
+
+# Backfill scope artifacts
+uv run python3 tools/backfill_lancedb_table_id.py <dataset_path>
+
+# Clone with submodules
+git clone --recurse-submodules <repo-url>
+# or after clone:
+git submodule update --init --recursive
+```
 
 To learn more about contributing and the project roadmap see [CONTRIBUTION.md](CONTRIBUTION.md), for technical details see [DEVELOPMENT.md](DEVELOPMENT.md).
+
+For Vercel deployment details see [documentation/vercel-deployment.md](documentation/vercel-deployment.md).
 
 ### Design principles
 

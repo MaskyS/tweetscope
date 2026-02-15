@@ -130,9 +130,6 @@ export const DATA_DIR = process.env.LATENT_SCOPE_DATA
   : null;
 
 const scopeCache = new Map<string, JsonRecord>();
-const linksMetaCache = new Map<string, JsonRecord>();
-const linksEdgesCache = new Map<string, EdgeRow[]>();
-const nodeStatsCache = new Map<string, NodeStatsRow[]>();
 
 function expandHome(p: string): string {
   if (p.startsWith("~/")) {
@@ -505,57 +502,3 @@ export function buildFilterWhere(filters: unknown): string | null {
   return clauses.join(" AND ");
 }
 
-function toEdgeRow(row: JsonRecord): EdgeRow {
-  return {
-    edge_id: row.edge_id == null ? null : String(row.edge_id),
-    edge_kind: String(row.edge_kind ?? ""),
-    src_tweet_id: String(row.src_tweet_id ?? ""),
-    dst_tweet_id: String(row.dst_tweet_id ?? ""),
-    src_ls_index: normalizeIndex(row.src_ls_index),
-    dst_ls_index: normalizeIndex(row.dst_ls_index),
-    internal_target: Boolean(row.internal_target),
-    provenance: row.provenance == null ? null : String(row.provenance),
-    source_url: row.source_url == null ? null : String(row.source_url),
-  };
-}
-
-export async function getEdges(dataset: string): Promise<EdgeRow[]> {
-  const cached = linksEdgesCache.get(dataset);
-  if (cached) return cached;
-  const rows = await loadParquetRows(`${dataset}/links/edges.parquet`);
-  const edges = rows.map((row) => toEdgeRow(row));
-  linksEdgesCache.set(dataset, edges);
-  return edges;
-}
-
-function toNodeStatsRow(row: JsonRecord): NodeStatsRow {
-  return {
-    tweet_id: row.tweet_id == null ? null : String(row.tweet_id),
-    ls_index: normalizeIndex(row.ls_index),
-    thread_root_id: row.thread_root_id == null ? null : String(row.thread_root_id),
-    thread_depth: normalizeIndex(row.thread_depth),
-    thread_size: normalizeIndex(row.thread_size),
-    reply_child_count: normalizeIndex(row.reply_child_count),
-    reply_in_count: normalizeIndex(row.reply_in_count),
-    reply_out_count: normalizeIndex(row.reply_out_count),
-    quote_in_count: normalizeIndex(row.quote_in_count),
-    quote_out_count: normalizeIndex(row.quote_out_count),
-  };
-}
-
-export async function getNodeStatsRows(dataset: string): Promise<NodeStatsRow[]> {
-  const cached = nodeStatsCache.get(dataset);
-  if (cached) return cached;
-  const rows = await loadParquetRows(`${dataset}/links/node_link_stats.parquet`);
-  const normalized = rows.map((row) => toNodeStatsRow(row));
-  nodeStatsCache.set(dataset, normalized);
-  return normalized;
-}
-
-export async function getLinksMeta(dataset: string): Promise<JsonRecord> {
-  const cached = linksMetaCache.get(dataset);
-  if (cached) return cached;
-  const meta = await loadJsonFile(`${dataset}/links/meta.json`);
-  linksMetaCache.set(dataset, meta);
-  return meta;
-}

@@ -69,7 +69,10 @@ if(not READ_ONLY):
     app.register_blueprint(jobs_write_bp, url_prefix='/api/jobs') 
 
 from .search import search_bp
-app.register_blueprint(search_bp, url_prefix='/api/search') 
+# Search endpoints (NN, SAE features, compare) are studio-only.
+# In production, NN search is served by the TS API via LanceDB Cloud.
+if APP_MODE == "studio":
+    app.register_blueprint(search_bp, url_prefix='/api/search')
 
 from .tags import tags_bp, tags_write_bp
 app.register_blueprint(tags_bp, url_prefix='/api/tags') 
@@ -77,7 +80,10 @@ if(not READ_ONLY):
     app.register_blueprint(tags_write_bp, url_prefix='/api/tags') 
 
 from .datasets import datasets_bp, datasets_write_bp
-app.register_blueprint(datasets_bp, url_prefix='/api/datasets')
+# Read endpoints (datasets_bp) are served by the TS API in production.
+# Only register in studio mode for local dev compatibility.
+if APP_MODE == "studio":
+    app.register_blueprint(datasets_bp, url_prefix='/api/datasets')
 if(not READ_ONLY):
     app.register_blueprint(datasets_write_bp, url_prefix='/api/datasets')
 
