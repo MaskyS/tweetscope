@@ -4,6 +4,7 @@ import json
 import os
 import shlex
 import shutil
+import sys
 import threading
 import uuid
 
@@ -15,11 +16,10 @@ from . import jobs_store
 from .jobs_commands import falsy_flag, shell_join, truthy_flag
 from .jobs_delete import (
     build_delete_embedding_command,
-    build_delete_sae_command,
+    build_delete_embedding_globs,
+    build_delete_umap_globs,
     build_delete_umap_command,
-    find_saes_to_delete_for_embedding,
     find_umaps_to_delete_for_embedding,
-    find_umaps_to_delete_for_sae,
 )
 from .jobs_runner import PROCESSES, kill_process, run_job
 
@@ -29,9 +29,33 @@ jobs_write_bp = Blueprint("jobs_write_bp", __name__)
 
 
 def _start_job_thread(
-    *, dataset: str, job_id: str, command: str, cleanup_paths: list[str] | None = None
+    *, dataset: str, job_id: str, job_spec: dict, cleanup_paths: list[str] | None = None
 ) -> None:
-    threading.Thread(target=run_job, args=(dataset, job_id, command, cleanup_paths)).start()
+    threading.Thread(target=run_job, args=(dataset, job_id, job_spec, cleanup_paths)).start()
+
+
+def _start_subprocess_job(
+    *,
+    dataset: str,
+    job_id: str,
+    argv: list[str],
+    cleanup_paths: list[str] | None = None,
+) -> None:
+    display_command = shell_join(argv)
+    _start_job_thread(
+        dataset=dataset,
+        job_id=job_id,
+        job_spec={"kind": "subprocess", "argv": argv, "display_command": display_command},
+        cleanup_paths=cleanup_paths,
+    )
+
+
+def _start_delete_job(*, dataset: str, job_id: str, globs: list[str], display_command: str) -> None:
+    _start_job_thread(
+        dataset=dataset,
+        job_id=job_id,
+        job_spec={"kind": "delete", "globs": globs, "display_command": display_command},
+    )
 
 
 @jobs_bp.route("/job")
@@ -71,10 +95,10 @@ def run_ingest():
     file.save(file_path)
 
     job_id = str(uuid.uuid4())
-    command = f'ls-ingest "{dataset}" --path="{file_path}"'
+    argv = ["ls-ingest", dataset, "--path", file_path]
     if text_column:
-        command += f' --text_column="{text_column}"'
-    _start_job_thread(dataset=dataset, job_id=job_id, command=command)
+        argv.extend(["--text_column", text_column])
+    _start_subprocess_job(dataset=dataset, job_id=job_id, argv=argv)
     return jsonify({"job_id": job_id, "dataset": dataset})
 
 
@@ -174,8 +198,7 @@ def run_import_twitter():
     if incremental_links is not None and falsy_flag(incremental_links):
         command_parts.append("--no-incremental-links")
 
-    command = shell_join(command_parts)
-    _start_job_thread(dataset=dataset, job_id=job_id, command=command, cleanup_paths=cleanup_paths)
+    _start_subprocess_job(dataset=dataset, job_id=job_id, argv=command_parts, cleanup_paths=cleanup_paths)
     return jsonify({"job_id": job_id, "dataset": dataset})
 
 
@@ -191,10 +214,10 @@ def run_reingest():
     file_path = os.path.join(dataset_dir, "input.parquet")
 
     job_id = str(uuid.uuid4())
-    command = f'ls-ingest "{dataset}" --path="{file_path}"'
+    argv = ["ls-ingest", dataset, "--path", file_path]
     if text_column:
-        command += f' --text_column="{text_column}"'
-    _start_job_thread(dataset=dataset, job_id=job_id, command=command)
+        argv.extend(["--text_column", text_column])
+    _start_subprocess_job(dataset=dataset, job_id=job_id, argv=argv)
     return jsonify({"job_id": job_id})
 
 
@@ -209,12 +232,21 @@ def run_embed():
     max_seq_length = request.args.get("max_seq_length")
 
     job_id = str(uuid.uuid4())
-    command = f'ls-embed "{dataset}" "{text_column}" "{model_id}" --prefix="{prefix}" --batch_size={batch_size}'
+    argv = [
+        "ls-embed",
+        str(dataset),
+        str(text_column),
+        str(model_id),
+        "--prefix",
+        str(prefix),
+        "--batch_size",
+        str(batch_size),
+    ]
     if dimensions is not None:
-        command += f" --dimensions={dimensions}"
+        argv.extend(["--dimensions", str(dimensions)])
     if max_seq_length is not None:
-        command += f" --max_seq_length={max_seq_length}"
-    _start_job_thread(dataset=dataset, job_id=job_id, command=command)
+        argv.extend(["--max_seq_length", str(max_seq_length)])
+    _start_subprocess_job(dataset=dataset, job_id=job_id, argv=argv)
     return jsonify({"job_id": job_id})
 
 
@@ -225,8 +257,8 @@ def run_embed_truncate():
     dimensions = request.args.get("dimensions")
 
     job_id = str(uuid.uuid4())
-    command = f'ls-embed-truncate "{dataset}" "{embedding_id}" {dimensions}'
-    _start_job_thread(dataset=dataset, job_id=job_id, command=command)
+    argv = ["ls-embed-truncate", str(dataset), str(embedding_id), str(dimensions)]
+    _start_subprocess_job(dataset=dataset, job_id=job_id, argv=argv)
     return jsonify({"job_id": job_id})
 
 
@@ -238,8 +270,8 @@ def run_embed_importer():
     text_column = request.args.get("text_column")
 
     job_id = str(uuid.uuid4())
-    command = f'ls-embed-importer "{dataset}" "{embedding_column}" "{model_id}" "{text_column}"'
-    _start_job_thread(dataset=dataset, job_id=job_id, command=command)
+    argv = ["ls-embed-importer", str(dataset), str(embedding_column), str(model_id), str(text_column)]
+    _start_subprocess_job(dataset=dataset, job_id=job_id, argv=argv)
     return jsonify({"job_id": job_id})
 
 
@@ -250,11 +282,28 @@ def rerun_job():
     if not dataset or not job_id:
         return jsonify({"error": "Missing dataset or job_id"}), 400
     job = jobs_store.read_job(dataset, job_id)
-    command = job.get("command")
-    command += f' --rerun {job.get("run_id")}'
+    run_id = job.get("run_id")
+    if not run_id:
+        return jsonify({"error": "Missing run_id on job"}), 400
+    argv = job.get("argv")
+    if isinstance(argv, list) and all(isinstance(x, str) for x in argv):
+        new_argv = [*argv, "--rerun", str(run_id)]
+        job_spec = {"kind": "subprocess", "argv": new_argv, "display_command": shell_join(new_argv)}
+    else:
+        command = str(job.get("command") or "")
+        try:
+            legacy_argv = shlex.split(command)
+        except ValueError as err:
+            return jsonify({"error": f"Unable to rerun legacy job command safely: {err}"}), 400
+        legacy_argv = [*legacy_argv, "--rerun", str(run_id)]
+        job_spec = {
+            "kind": "subprocess",
+            "argv": legacy_argv,
+            "display_command": shell_join(legacy_argv),
+        }
     new_job_id = str(uuid.uuid4())
     print("new job id", new_job_id)
-    _start_job_thread(dataset=dataset, job_id=new_job_id, command=command)
+    _start_job_thread(dataset=dataset, job_id=new_job_id, job_spec=job_spec)
     return jsonify({"job_id": new_job_id})
 
 
@@ -282,15 +331,13 @@ def delete_embedding():
     embedding_id = request.args.get("embedding_id")
 
     umaps_to_delete = find_umaps_to_delete_for_embedding(dataset, embedding_id)
-    saes_to_delete = find_saes_to_delete_for_embedding(dataset, embedding_id)
 
     job_id = str(uuid.uuid4())
-    command = build_delete_embedding_command(dataset, embedding_id)
+    globs = build_delete_embedding_globs(dataset, embedding_id)
+    display_command = build_delete_embedding_command(dataset, embedding_id)
     for umap in umaps_to_delete:
         _ = delete_umap(dataset, umap)
-    for sae in saes_to_delete:
-        _ = delete_sae(dataset, sae)
-    _start_job_thread(dataset=dataset, job_id=job_id, command=command)
+    _start_delete_job(dataset=dataset, job_id=job_id, globs=globs, display_command=display_command)
     return jsonify({"job_id": job_id})
 
 
@@ -307,19 +354,19 @@ def run_umap():
     seed = request.args.get("seed")
 
     job_id = str(uuid.uuid4())
-    command = f'ls-umap "{dataset}" "{embedding_id}" {neighbors} {min_dist}'
+    argv = ["ls-umap", str(dataset), str(embedding_id), str(neighbors), str(min_dist)]
     if init:
-        command += f" --init={init}"
+        argv.extend(["--init", str(init)])
     if align:
-        command += f" --align={align}"
+        argv.extend(["--align", str(align)])
     if save:
-        command += " --save"
+        argv.append("--save")
     if sae_id:
-        command += f" --sae_id={sae_id}"
+        argv.extend(["--sae_id", str(sae_id)])
     if seed:
-        command += f" --seed={seed}"
+        argv.extend(["--seed", str(seed)])
 
-    _start_job_thread(dataset=dataset, job_id=job_id, command=command)
+    _start_subprocess_job(dataset=dataset, job_id=job_id, argv=argv)
     return jsonify({"job_id": job_id})
 
 
@@ -332,39 +379,9 @@ def delete_umap_request():
 
 def delete_umap(dataset: str, umap_id: str):
     job_id = str(uuid.uuid4())
-    command = build_delete_umap_command(dataset, umap_id)
-    _start_job_thread(dataset=dataset, job_id=job_id, command=command)
-    return jsonify({"job_id": job_id})
-
-
-@jobs_write_bp.route("/sae")
-def run_sae():
-    dataset = request.args.get("dataset")
-    embedding_id = request.args.get("embedding_id")
-    model_id = request.args.get("model_id")
-    k_expansion = request.args.get("k_expansion")
-
-    job_id = str(uuid.uuid4())
-    command = f'ls-sae "{dataset}" "{embedding_id}" "{model_id}" {k_expansion}'
-    _start_job_thread(dataset=dataset, job_id=job_id, command=command)
-    return jsonify({"job_id": job_id})
-
-
-@jobs_write_bp.route("/delete/sae")
-def delete_sae_request():
-    dataset = request.args.get("dataset")
-    sae_id = request.args.get("sae_id")
-    return delete_sae(dataset, sae_id)
-
-
-def delete_sae(dataset: str, sae_id: str):
-    umaps_to_delete = find_umaps_to_delete_for_sae(dataset, sae_id)
-
-    job_id = str(uuid.uuid4())
-    command = build_delete_sae_command(dataset, sae_id)
-    for umap in umaps_to_delete:
-        _ = delete_umap(dataset, umap)
-    _start_job_thread(dataset=dataset, job_id=job_id, command=command)
+    globs = build_delete_umap_globs(dataset, umap_id)
+    display_command = build_delete_umap_command(dataset, umap_id)
+    _start_delete_job(dataset=dataset, job_id=job_id, globs=globs, display_command=display_command)
     return jsonify({"job_id": job_id})
 
 
@@ -377,8 +394,8 @@ def run_cluster():
     cluster_selection_epsilon = request.args.get("cluster_selection_epsilon")
 
     job_id = str(uuid.uuid4())
-    command = f'ls-cluster "{dataset}" "{umap_id}" {samples} {min_samples} {cluster_selection_epsilon}'
-    _start_job_thread(dataset=dataset, job_id=job_id, command=command)
+    argv = ["ls-cluster", str(dataset), str(umap_id), str(samples), str(min_samples), str(cluster_selection_epsilon)]
+    _start_subprocess_job(dataset=dataset, job_id=job_id, argv=argv)
     return jsonify({"job_id": job_id})
 
 
@@ -387,9 +404,9 @@ def delete_cluster():
     dataset = request.args.get("dataset")
     cluster_id = request.args.get("cluster_id")
     job_id = str(uuid.uuid4())
-    path = os.path.join(jobs_store.DATA_DIR or "", dataset, "clusters", f"{cluster_id}*").replace(" ", "\\ ")
-    command = f"rm -rf {path}"
-    _start_job_thread(dataset=dataset, job_id=job_id, command=command)
+    path_glob = os.path.join(jobs_store.DATA_DIR or "", dataset, "clusters", f"{cluster_id}*")
+    display_command = f"rm -rf {path_glob}".strip()
+    _start_delete_job(dataset=dataset, job_id=job_id, globs=[path_glob], display_command=display_command)
     return jsonify({"job_id": job_id})
 
 
@@ -403,16 +420,13 @@ def run_cluster_label():
     samples = request.args.get("samples")
     max_tokens_per_sample = request.args.get("max_tokens_per_sample")
     max_tokens_total = request.args.get("max_tokens_total")
-    if context:
-        context = context.replace('"', '\\"')
-
     job_id = str(uuid.uuid4())
-    command = f'ls-label "{dataset}" "{text_column}" "{cluster_id}" "{chat_id}" {samples} "{context}"'
+    argv = ["ls-label", str(dataset), str(text_column), str(cluster_id), str(chat_id), str(samples), str(context or "")]
     if max_tokens_per_sample:
-        command += f" --max_tokens_per_sample={max_tokens_per_sample}"
+        argv.extend(["--max_tokens_per_sample", str(max_tokens_per_sample)])
     if max_tokens_total:
-        command += f" --max_tokens_total={max_tokens_total}"
-    _start_job_thread(dataset=dataset, job_id=job_id, command=command)
+        argv.extend(["--max_tokens_total", str(max_tokens_total)])
+    _start_subprocess_job(dataset=dataset, job_id=job_id, argv=argv)
     return jsonify({"job_id": job_id})
 
 
@@ -421,9 +435,9 @@ def delete_cluster_label():
     dataset = request.args.get("dataset")
     cluster_labels_id = request.args.get("cluster_labels_id")
     job_id = str(uuid.uuid4())
-    path = os.path.join(jobs_store.DATA_DIR or "", dataset, "clusters", f"{cluster_labels_id}*").replace(" ", "\\ ")
-    command = f"rm -rf {path}"
-    _start_job_thread(dataset=dataset, job_id=job_id, command=command)
+    path_glob = os.path.join(jobs_store.DATA_DIR or "", dataset, "clusters", f"{cluster_labels_id}*")
+    display_command = f"rm -rf {path_glob}".strip()
+    _start_delete_job(dataset=dataset, job_id=job_id, globs=[path_glob], display_command=display_command)
     return jsonify({"job_id": job_id})
 
 
@@ -440,14 +454,21 @@ def run_scope():
     scope_id = request.args.get("scope_id")
 
     job_id = str(uuid.uuid4())
-    command = (
-        f'ls-scope "{dataset}" "{embedding_id}" "{umap_id}" "{cluster_id}" "{cluster_labels_id}" "{label}" "{description}"'
-    )
+    argv = [
+        "ls-scope",
+        str(dataset),
+        str(embedding_id),
+        str(umap_id),
+        str(cluster_id),
+        str(cluster_labels_id),
+        str(label),
+        str(description),
+    ]
     if sae_id:
-        command += f" --sae_id={sae_id}"
+        argv.extend(["--sae_id", str(sae_id)])
     if scope_id:
-        command += f" --scope_id={scope_id}"
-    _start_job_thread(dataset=dataset, job_id=job_id, command=command)
+        argv.extend(["--scope_id", str(scope_id)])
+    _start_subprocess_job(dataset=dataset, job_id=job_id, argv=argv)
     return jsonify({"job_id": job_id})
 
 
@@ -457,9 +478,9 @@ def delete_scope():
     scope_id = request.args.get("scope_id")
 
     job_id = str(uuid.uuid4())
-    path = os.path.join(jobs_store.DATA_DIR or "", dataset, "scopes", f"{scope_id}*").replace(" ", "\\ ")
-    command = f"rm -rf {path}"
-    _start_job_thread(dataset=dataset, job_id=job_id, command=command)
+    path_glob = os.path.join(jobs_store.DATA_DIR or "", dataset, "scopes", f"{scope_id}*")
+    display_command = f"rm -rf {path_glob}".strip()
+    _start_delete_job(dataset=dataset, job_id=job_id, globs=[path_glob], display_command=display_command)
     return jsonify({"job_id": job_id})
 
 
@@ -470,11 +491,16 @@ def run_plot():
     config = request.args.get("config")
 
     job_id = str(uuid.uuid4())
-    command = f'ls-export-plot "{dataset}" {scope_id}'
+    # Preserve legacy behavior: `config` is a string query param; old code used `json.dumps(config)`
+    # which double-serialized JSON strings and produced `null` when config was omitted.
     escaped_config = json.dumps(config)
-    command += f" --plot_config={escaped_config}"
-
-    _start_job_thread(dataset=dataset, job_id=job_id, command=command)
+    argv = [
+        "ls-export-plot",
+        str(dataset),
+        str(scope_id),
+        f"--plot_config={escaped_config}",
+    ]
+    _start_subprocess_job(dataset=dataset, job_id=job_id, argv=argv)
     return jsonify({"job_id": job_id})
 
 
@@ -484,8 +510,8 @@ def download_dataset():
     dataset_name = request.args.get("dataset_name")
 
     job_id = str(uuid.uuid4())
-    command = f'ls-download-dataset "{dataset_repo}" "{dataset_name}" "{jobs_store.DATA_DIR}"'
-    _start_job_thread(dataset=dataset_name, job_id=job_id, command=command)
+    argv = ["ls-download-dataset", str(dataset_repo), str(dataset_name), str(jobs_store.DATA_DIR)]
+    _start_subprocess_job(dataset=dataset_name, job_id=job_id, argv=argv)
     return jsonify({"job_id": job_id})
 
 
@@ -498,8 +524,14 @@ def upload_dataset():
 
     job_id = str(uuid.uuid4())
     path = os.path.join(jobs_store.DATA_DIR or "", dataset)
-    command = f'ls-upload-dataset "{path}" "{hf_dataset}" --main-parquet="{main_parquet}" --private={private}'
-    _start_job_thread(dataset=dataset, job_id=job_id, command=command)
+    argv = [
+        "ls-upload-dataset",
+        str(path),
+        str(hf_dataset),
+        f"--main-parquet={main_parquet}",
+        f"--private={private}",
+    ]
+    _start_subprocess_job(dataset=dataset, job_id=job_id, argv=argv)
     return jsonify({"job_id": job_id})
 
 
@@ -514,14 +546,23 @@ def run_toponymy():
     context = request.args.get("context", "")
 
     job_id = str(uuid.uuid4())
-    command = f'python -m latentscope.scripts.toponymy_labels "{dataset}" "{scope_id}"'
-    command += f' --llm-provider="{llm_provider}"'
-    command += f' --llm-model="{llm_model}"'
-    command += f" --min-clusters={min_clusters}"
-    command += f" --base-min-cluster-size={base_min_cluster_size}"
+    argv = [
+        sys.executable,
+        "-m",
+        "latentscope.scripts.toponymy_labels",
+        str(dataset),
+        str(scope_id),
+        "--llm-provider",
+        str(llm_provider),
+        "--llm-model",
+        str(llm_model),
+        "--min-clusters",
+        str(min_clusters),
+        "--base-min-cluster-size",
+        str(base_min_cluster_size),
+    ]
     if context:
-        escaped_context = context.replace('"', '\\"')
-        command += f' --context="{escaped_context}"'
+        argv.extend(["--context", str(context)])
 
-    _start_job_thread(dataset=dataset, job_id=job_id, command=command)
+    _start_subprocess_job(dataset=dataset, job_id=job_id, argv=argv)
     return jsonify({"job_id": job_id})
