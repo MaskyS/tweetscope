@@ -91,7 +91,6 @@ setup(
             'ls-label=latentscope.scripts.label_clusters:main',
             'ls-scope=latentscope.scripts.scope:main',
             'ls-update-embedding-stats=latentscope.scripts.embed:update_embedding_stats',
-            'ls-sae=latentscope.scripts.sae:main',
             'ls-download-dataset=latentscope.scripts.download_dataset:main',
             'ls-upload-dataset=latentscope.scripts.upload_dataset:main',
             'ls-twitter-import=latentscope.scripts.twitter_import:main',

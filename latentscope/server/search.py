@@ -7,7 +7,6 @@ from flask import Blueprint, jsonify, request
 from sklearn.neighbors import NearestNeighbors
 
 from latentscope.models import get_embedding_model
-from latentsae.sae import Sae
 
 # Create a Blueprint
 search_bp = Blueprint('search_bp', __name__)
@@ -290,5 +289,4 @@ def compare():
     combined_scores = absolute_displacement #(absolute_displacement + relative_displacement + displacement_scores) / 3
     return jsonify(combined_scores.tolist())
     # return jsonify(displacement_scores.tolist())
-
 
