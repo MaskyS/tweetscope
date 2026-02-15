@@ -40,7 +40,5 @@ export {
   listDatasetsFromDataDir,
   listJsonObjects,
   loadJsonFile,
-  loadParquetRows,
   resolveLanceTableId,
 } from "./dataShared/storage.js";
-

@@ -39,23 +39,6 @@ export const catalogClient = {
         }))
       );
   },
-  fetchClusterLabelsAvailable: async (
-    datasetId: string,
-    clusterId: string
-  ): Promise<JsonRecord[]> => {
-    return fetch(`${apiUrl}/datasets/${datasetId}/clusters/${clusterId}/labels_available`).then(
-      (response) => parseJson<JsonRecord[]>(response)
-    );
-  },
-  fetchClusterLabels: async (
-    datasetId: string,
-    clusterId: string,
-    labelId: string
-  ): Promise<JsonRecord[]> => {
-    return fetch(`${apiUrl}/datasets/${datasetId}/clusters/${clusterId}/labels/${labelId}`).then(
-      (response) => parseJson<JsonRecord[]>(response)
-    );
-  },
   fetchDatasets: async (): Promise<JsonRecord[]> => {
     return fetch(`${apiUrl}/datasets`).then((response) => parseJson<JsonRecord[]>(response));
   },

@@ -6,7 +6,6 @@ import {
   getScopeMeta,
   jsonSafe,
   listJsonObjects,
-  loadParquetRows,
   normalizeIndex,
   resolveLanceTableId,
   scopeContract,
@@ -224,14 +223,5 @@ viewsRoutes.get("/datasets/:dataset/clusters/:cluster/labels_available", async (
 });
 
 viewsRoutes.get("/datasets/:dataset/clusters/:cluster/labels/:labelId", async (c) => {
-  const { dataset, cluster, labelId } = c.req.param();
-  try {
-    const rows = await loadParquetRows(
-      `${dataset}/clusters/${cluster}-labels-${labelId}.parquet`
-    );
-    const withIndex = rows.map((row, index) => ({ index, ...row }));
-    return c.json(withIndex);
-  } catch {
-    return c.json({ error: "Cluster labels not found" }, 404);
-  }
+  return c.json({ error: "Cluster labels endpoint removed (no parquet serving)" }, 410);
 });

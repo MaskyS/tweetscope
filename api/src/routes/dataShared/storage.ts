@@ -1,19 +1,9 @@
-import { asyncBufferFromUrl, parquetReadObjects } from "hyparquet";
-import { createReadStream } from "node:fs";
-import { readdir, readFile, stat } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 
 import { DATA_DIR, RAW_DATA_URL } from "./env.js";
 import { ensureSafeRelativePath, fileExists, buildFileUrl } from "./paths.js";
-import { jsonSafe } from "./transforms.js";
 import type { JsonRecord } from "./types.js";
-
-type Awaitable<T> = T | Promise<T>;
-
-interface AsyncBuffer {
-  byteLength: number;
-  slice: (start: number, end?: number) => Awaitable<ArrayBuffer>;
-}
 
 const scopeCache = new Map<string, JsonRecord>();
 
@@ -37,58 +27,6 @@ export async function loadJsonFile(relativePath: string): Promise<JsonRecord> {
   }
 
   throw new Error("No data source configured (LATENT_SCOPE_DATA or DATA_URL)");
-}
-
-export async function loadParquetRows(
-  relativePath: string,
-  columns?: string[],
-): Promise<JsonRecord[]> {
-  const safePath = ensureSafeRelativePath(relativePath);
-  let file: AsyncBuffer | undefined;
-
-  if (DATA_DIR) {
-    const fullPath = path.join(DATA_DIR, safePath);
-    if (await fileExists(fullPath)) {
-      file = await asyncBufferFromLocalFile(fullPath);
-    }
-  }
-
-  if (!file && RAW_DATA_URL) {
-    file = await asyncBufferFromUrl({ url: buildFileUrl(safePath) });
-  }
-
-  if (!file) {
-    throw new Error(`Unable to locate parquet file: ${safePath}`);
-  }
-
-  const rows = (await parquetReadObjects({
-    file,
-    ...(columns?.length ? { columns } : {}),
-  })) as JsonRecord[];
-
-  return rows.map((row) => jsonSafe(row) as JsonRecord);
-}
-
-async function asyncBufferFromLocalFile(filename: string): Promise<AsyncBuffer> {
-  const { size } = await stat(filename);
-  return {
-    byteLength: size,
-    async slice(start: number, end?: number): Promise<ArrayBuffer> {
-      const readEnd = end === undefined ? undefined : Math.max(start, end - 1);
-      const stream = createReadStream(filename, { start, end: readEnd });
-      return new Promise<ArrayBuffer>((resolve, reject) => {
-        const chunks: Buffer[] = [];
-        stream.on("data", (chunk) =>
-          chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)),
-        );
-        stream.on("error", reject);
-        stream.on("end", () => {
-          const buffer = Buffer.concat(chunks);
-          resolve(buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength));
-        });
-      });
-    },
-  };
 }
 
 export async function resolveLanceTableId(dataset: string, scopeId: string): Promise<string> {
