@@ -76,16 +76,13 @@ def test_jobs_import_accepts_valid_extracted_payload_without_spawning_job(tmp_pa
 
     started = {"called": False}
 
-    class _DummyThread:
-        def __init__(self, *args, **kwargs):
-            self.args = args
-            self.kwargs = kwargs
-
-        def start(self):
-            started["called"] = True
-
-    # Patch where it's used (jobs.py imports threading)
-    monkeypatch.setattr(jobs.threading, "Thread", _DummyThread)
+    import latentscope.server.jobs_routes as jobs_routes
+    # Patch where it's used (jobs_routes starts the thread).
+    monkeypatch.setattr(
+        jobs_routes,
+        "_start_job_thread",
+        lambda **_kwargs: started.__setitem__("called", True),
+    )
 
     app = Flask(__name__)
     app.testing = True
