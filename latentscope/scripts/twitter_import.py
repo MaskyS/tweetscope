@@ -623,7 +623,7 @@ def run_import(
     cluster_selection_epsilon: float = 0.0,
     hierarchical_labels: bool = True,
     toponymy_provider: str = "openai",
-    toponymy_model: str = "gpt-4o-mini",
+    toponymy_model: str = "gpt-5-mini",
     toponymy_min_clusters: int = 2,
     toponymy_base_min_cluster_size: int = 10,
     toponymy_context: str | None = None,
@@ -904,7 +904,7 @@ def main() -> None:
     parser.add_argument(
         "--toponymy-model",
         type=str,
-        default="gpt-4o-mini",
+        default="gpt-5-mini",
         help="LLM model for Toponymy label generation",
     )
     parser.add_argument(

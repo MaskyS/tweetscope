@@ -1,348 +1,399 @@
-# Latent Scope
+# tweetscope
 
-[![](https://dcbadge.vercel.app/api/server/x7NvpnM4pY?style=flat)](https://discord.gg/x7NvpnM4pY)
-[![PyPI version](https://img.shields.io/pypi/v/latentscope.svg)](https://pypi.org/project/latentscope/)
+Turn Twitter/X archives into multiscale knowledge bases. Embed, project, cluster, label with LLMs, and explore interactively.
 
-Quickly embed, project, cluster and explore a dataset with open models locally or via API. This project is a new kind of workflow + tool for visualizing and exploring datasets through the lens of latent spaces.
+Fork of [enjalot/latent-scope](https://github.com/enjalot/latent-scope) + [datamapplot](https://github.com/TutteInstitute/datamapplot) + [toponymy](https://github.com/TutteInstitute/toponymy) — specialised for Twitter/X archive analysis.
 
-[Docs](https://enjalot.github.io/latent-scope/) · [Demos](https://latent.estate)
+## How it works
 
-| [![](https://storage.googleapis.com/fun-data/latent-scope/demos/enjalot/ls-fineweb-edu-100k/scopes-001.png)](http://latent.estate/scope/enjalot/ls-fineweb-edu-100k/scopes-001) | [![](https://storage.googleapis.com/fun-data/latent-scope/demos/enjalot/ls-dadabase/scopes-001.png)](https://latent.estate/scope/enjalot/ls-dadabase/scopes-001) | [![](https://storage.googleapis.com/fun-data/latent-scope/demos/enjalot/ls-common-corpus-100k/scopes-001.png)](https://latent.estate/scope/enjalot/ls-common-corpus-100k/scopes-001) | [![](https://storage.googleapis.com/fun-data/latent-scope/demos/enjalot/ls-dataisplural/scopes-001.png)](https://latent.estate/scope/enjalot/ls-dataisplural/scopes-001) |
-| :-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------: | :--------------------------------------------------------------------------------------------------------------------------------------------------------------: | :----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------: | :----------------------------------------------------------------------------------------------------------------------------------------------------------------------: |
-|                                                [Fineweb EDU](http://latent.estate/scope/enjalot/ls-fineweb-edu-100k/scopes-001)                                                 |                                             [Dad Jokes](https://latent.estate/scope/enjalot/ls-dadabase/scopes-001)                                              |                                                [Common Corpus](https://latent.estate/scope/enjalot/ls-common-corpus-100k/scopes-001)                                                 |                                             [Data is Plural](https://latent.estate/scope/enjalot/ls-dataisplural/scopes-001)                                             |
+The core mental model: take unstructured text, embed it into a high-dimensional vector space, reduce to 2D for display (and kD for clustering), cluster the points with HDBSCAN, then label each cluster with an LLM. The result is an interactive scatter plot where every point is a document and every region has a human-readable topic name.
 
-Latent Scope encodes a process that is increasingly common in AI and data science workflows: Embed unstructured data into high-dimensional vectors, reduce the dimensionality of those vectors, cluster the resulting points, label the clusters with an LLM and then explore the annotated data.
+<picture>
+  <img src="documentation/pipeline-flow.svg" alt="Data pipeline: ingest → embed → UMAP → cluster → label → scope → explore">
+</picture>
 
-<img src="https://github.com/enjalot/latent-scope/blob/main/documentation/process-crop.png?raw=true"  alt="Setup your scope">
+Each pipeline step writes flat files (Parquet, HDF5, JSON) to a dataset directory. Steps are idempotent and parameterised — you can re-run any step with different settings and compare the results via scopes.
 
-In addition to making this process easier by providing a web interface for each step, Latent Scope provides an intuitive way to explore the resulting annotated data via an interactive visualization tightly coupled with the input data.
+## System architecture
 
-<img src="https://github.com/enjalot/latent-scope/blob/main/documentation/explore.png?raw=true" alt="Explore and your data">
+Two servers, one frontend. In local/studio mode the Flask server handles everything. In production the Hono TypeScript API serves read paths from pre-built artifacts on R2/CDN, with vector search via LanceDB Cloud + VoyageAI.
 
-## Getting started
+<picture>
+  <img src="documentation/system-architecture.svg" alt="System architecture: React frontend, typed API clients, Flask studio + Hono production, Python pipeline, flat file storage">
+</picture>
 
-Follow the documentation guides to get started:
+### Runtime modes
 
-1. [Install and Configure](https://enjalot.github.io/latent-scope/install-and-config)
-2. [Your First Scope](https://enjalot.github.io/latent-scope/your-first-scope)
-3. [Explore and Curate](https://enjalot.github.io/latent-scope/explore-and-curate)
-4. [Exporting Data](https://enjalot.github.io/latent-scope/exporting-data)
+| Mode | `LATENT_SCOPE_APP_MODE` | Purpose |
+|------|------------------------|---------|
+| **Studio** | `studio` | Local dev: full pipeline UI, settings, jobs, export |
+| **Hosted** | `hosted` | Multi-user: explore + Twitter import, no admin |
+| **Single Profile** | `single_profile` | Read-only: one public scope, no import |
 
-## Example Analysis
+Mode is set via environment variable. One frontend build adapts to all modes via feature flags from `/api/app-config`.
 
-What can you do with Latent Scope? The following examples demonstrate the kinds of perspective and insights you can gain from your unstructured text data.
+## Explore UI
 
-- Explore free-responses from surveys in this [datavis survey analysis](https://enjalot.github.io/latent-scope/datavis-survey)
-- Cluster thousands of [GitHub issues and PRs](https://enjalot.github.io/latent-scope/plot-issues)
-- Explore 50,000 [US Federal laws](https://enjalot.github.io/latent-scope/us-federal-laws) spanning two hundred years.
+The explore interface is a 3-panel layout: topic tree (left), scatter plot (center), feed/carousel (right). The right panel has 5 states managed by `useSidebarState`: collapsed, normal feed, expanded carousel, thread view, and quote view.
 
-### Quick Start
+<picture>
+  <img src="documentation/explore-ui.svg" alt="Explore UI: ScopeContext + FilterContext feed into VisualizationPane, TopicTree, TweetFeed, FeedCarousel, ThreadView">
+</picture>
 
-Latent Scope works on Mac, Linux and Windows. Python 3.12 is the recommended python version.
+### Key frontend concepts
 
-To get started, install the [latent-scope python module](https://pypi.org/project/latentscope/) and run the server via the Command Line:
+| Concept | Where | What it does |
+|---------|-------|--------------|
+| **ScopeContext** | `web/src/contexts/ScopeContext.tsx` | Loads scope metadata, builds `clusterMap`, `clusterHierarchy`, provides `scopeRows` |
+| **FilterContext** | `web/src/contexts/FilterContext.jsx` | Manages active filter (cluster, search, feature, column), `filteredIndices`, pagination |
+| **DeckGLScatter** | `web/src/components/Explore/V2/DeckGLScatter.jsx` | Deck.GL ScatterplotLayer + TextLayer, categorical hue per cluster |
+| **TopicTree** | `web/src/components/Explore/V2/TopicTree.jsx` | Hierarchical cluster tree, sorted by cumulative engagement |
+| **FeedCarousel** | `web/src/components/Explore/V2/Carousel/` | Multi-column expanded view with per-column data from `useCarouselData` |
+| **ThreadView** | `web/src/components/Explore/V2/ThreadView/` | Reply chain visualisation via graph edges |
+
+### Typed API clients
+
+The frontend uses domain-split API clients (`web/src/api/`):
+
+- `catalogClient` — scope/embedding/cluster metadata
+- `viewClient` — scope rows (Parquet via hyparquet)
+- `graphClient` — reply/quote edges and node stats
+- `queryClient` — row fetching by indices with pagination
+- `baseClient` — shared HTTP helpers, `apiUrl` from `VITE_API_URL`
+
+## Quick start
+
+### Local development (studio mode)
 
 ```bash
-python -m venv venv
-source venv/bin/activate
-pip install latentscope
-ls-init ~/latent-scope-data --openai_key=XXX --mistral_key=YYY # optional api keys to enable API models
-ls-serve
+# Python backend
+pip install -e .
+ls-init ~/latent-scope-data --openai_key=XXX --voyage_key=YYY
+ls-serve ~/latent-scope-data  # Flask on :5001
+
+# Frontend (separate terminal)
+cd web && npm install && npm run dev  # Vite on :5174
 ```
 
-Then open your browser to http://localhost:5001 and start processing your first dataset!
-
-See the [Your First Scope](https://enjalot.github.io/latent-scope/your-first-scope) guide for a detailed walk-through of the process.
-
-### Hosted and single-profile modes
-
-You can run one frontend build in different server modes using environment variables:
+### Twitter/X archive import
 
 ```bash
-# default local authoring mode
-LATENT_SCOPE_APP_MODE=studio
+# Native X export zip — runs full pipeline (embed → UMAP → cluster → scope)
+ls-twitter-import visakanv --source zip --zip_path archives/archive.zip --run_pipeline
 
-# hosted mode: explore + twitter import (no setup/settings)
-LATENT_SCOPE_APP_MODE=hosted
-
-# single profile mode: serve one public explore view only
-LATENT_SCOPE_APP_MODE=single_profile
-LATENT_SCOPE_PUBLIC_DATASET=your-dataset-id
-LATENT_SCOPE_PUBLIC_SCOPE=scopes-001
-
-# optional hosted limits
-LATENT_SCOPE_MAX_UPLOAD_MB=1024
-LATENT_SCOPE_JOB_TIMEOUT_SEC=1800
+# Community archive by username
+ls-twitter-import visakanv --source community --username visakanv --run_pipeline
 ```
 
-The native X archive form always extracts/minimizes tweet payloads in-browser before upload; raw zip uploads to `/jobs/import_twitter` are rejected.
+### Progressive import (large archives)
 
-For Vercel deployment of demo + hosted variants from one GitHub repo, see `documentation/vercel-deployment.md`.
+For large archives (100k+ tweets), import year by year. Each run ingests only — no pipeline — deduplicating by tweet ID and appending new rows while preserving existing `ls_index` values. A batch manifest is written to `imports/` after each run. Once all years are imported, run the pipeline once on the full dataset.
+
+```bash
+# Step 1: Ingest year by year (no --run_pipeline, ingest only)
+for year in 2018 2019 2020 2021 2022 2023 2024; do
+  ls-twitter-import visakanv-tweets --source zip --zip_path archives/archive.zip \
+    --year $year --import_batch_id "visakanv-$year"
+done
+
+# Step 2: Run pipeline once on the full dataset
+ls-twitter-import visakanv-tweets --source zip --zip_path archives/archive.zip \
+  --run_pipeline --import_batch_id "visakanv-final"
+```
+
+Additional filters can be combined with `--year`:
+
+| Flag | Purpose | Example |
+|------|---------|---------|
+| `--lang` | Filter by language | `--lang en` |
+| `--min_favorites` | Minimum engagement | `--min_favorites 10` |
+| `--min_text_length` | Skip short tweets | `--min_text_length 50` |
+| `--exclude_replies` | Drop replies | |
+| `--exclude_retweets` | Drop retweets | |
+| `--exclude_likes` | Skip likes | |
+| `--top_n` | Limit row count | `--top_n 5000` |
+| `--sort` | Order by `recent` or `engagement` | `--sort engagement` |
+
+### CLI pipeline (step by step)
+
+```bash
+ls-ingest-csv "my-dataset" ~/data.csv
+ls-embed my-dataset "text" voyageai-voyage-4-lite
+ls-umap my-dataset embedding-001 25 0.1                           # 2D display
+ls-umap my-dataset embedding-001 25 0.1 --purpose cluster --n_components 10  # kD for clustering
+ls-cluster my-dataset umap-001 50 5 --clustering_umap_id umap-002
+ls-scope my-dataset cluster-001-labels-default "My scope" "Description"
+
+# Hierarchical labels via Toponymy (the default for twitter imports)
+uv run python3 -m latentscope.scripts.toponymy_labels my-dataset scopes-001 \
+    --llm-provider openai --llm-model gpt-5-mini
+
+ls-build-links-graph my-dataset                                    # reply/quote edges
+ls-serve ~/latent-scope-data
+```
 
 ### Python interface
 
-You can also ingest data from a Pandas dataframe using the Python interface:
-
 ```python
 import latentscope as ls
-df = pd.read_parquet("...")
-ls.init("~/latent-scope-data") # you can also pass in openai_key="XXX", mistral_key="XXX" etc.)
-ls.ingest("dadabase", df, text_column="joke")
+import pandas as pd
+
+ls.init("~/latent-scope-data", openai_key="XXX")
+df = pd.read_parquet("my_data.parquet")
+ls.ingest("my-dataset", df, text_column="text")
+ls.embed("my-dataset", "text", "voyageai-voyage-4-lite")
+ls.umap("my-dataset", "embedding-001", 25, 0.1)
+ls.cluster("my-dataset", "umap-001", 50, 5)
+ls.scope("my-dataset", "cluster-001-labels-default", "My scope", "Description")
+# Then run toponymy_labels.py for hierarchical labels
 ls.serve()
 ```
 
-See the [upstream repository](https://github.com/enjalot/latent-scope) for notebook examples of using the Python interface to prepare and load data.
+### Hosted / production deployment
 
-### Command line quick start
-
-When latent-scope is installed, it creates a suite of command line scripts that can be used to setup the scopes for exploring in the web application. The output of each step in the process is flat files stored in the data directory specified at init. These files are in standard formats that were designed to be ported into other pipelines or interfaces.
+See [documentation/vercel-deployment.md](documentation/vercel-deployment.md) for Vercel setup with four projects (web-demo, api-demo, web-app, api-app) from a single branch.
 
 ```bash
-# like above, we make sure to install latent-scope
-python -m venv venv
-source venv/bin/activate
-pip install latent-scope
+# Production API (Hono)
+cd api && npm install && npm run dev   # tsx watch on :3000
+cd api && npm run build && npm start   # compiled
 
-# prepare some data
-wget "https://storage.googleapis.com/fun-data/latent-scope/examples/dvs-survey/datavis-misunderstood.csv" > ~/Downloads/datavis-misunderstood.csv
-
-ls-init "~/latent-scope-data"
-# ls-ingest dataset_id csv_path
-ls-ingest-csv "datavis-misunderstood" "~/Downloads/datavis-misunderstood.csv"
-# get a list of model ids available (lists both embedding and chat models available)
-ls-list-models
-# ls-embed dataset_id text_column model_id prefix
-ls-embed datavis-misunderstood "answer" transformers-intfloat___e5-small-v2 ""
-# ls-umap dataset_id embedding_id n_neighbors min_dist
-ls-umap datavis-misunderstood embedding-001 25 .1
-# ls-cluster dataset_id umap_id samples min_samples
-ls-cluster datavis-misunderstood umap-001 5 5
-# ls-label dataset_id text_column cluster_id model_id context
-ls-label datavis-misunderstood "answer" cluster-001 transformers-HuggingFaceH4___zephyr-7b-beta ""
-# ls-scope  dataset_id embedding_id umap_id cluster_id cluster_labels_id label description
-ls-scope datavis-misunderstood cluster-001-labels-001 "E5 demo" "E5 embeddings summarized by Zephyr 7B"
-# start the server to explore your scope
-ls-serve
+# Frontend production build
+cd web && npx vite build --mode production
 ```
 
-### Repository structure
+## Test datasets
+
+Three datasets are used for development and testing. Archive zips live in `archives/` (gitignored).
+
+| Dataset | Source | Size | Pipeline | Purpose |
+|---------|--------|------|----------|---------|
+| **visakanv-tweets** | Community archive (1k sample) | ~1,000 tweets | Current | Dev test corpus; full 200k+ archive will power the public demo |
+| **sheik-tweets** | Native X export (`archives/my-twitter-archive.zip`) | ~10k tweets | Current | Primary dev corpus |
+| **patrick-tweets** | Native X export | 50 tweets | Outdated — needs re-import | Future read-only public dataset |
+
+"Current pipeline" means: voyage-4-lite embeddings, split UMAP (2D display + 10D clustering), HDBSCAN on kD manifold, hierarchical toponymy labels with audit loop.
+
+To set up from scratch:
+
+```bash
+# Copy masky's archive into the repo (gitignored)
+cp ~/Downloads/my-twitter-archive.zip archives/
+
+# Import visakanv: 1k sample from the community archive
+ls-twitter-import visakanv-tweets \
+  --source community --username visakanv \
+  --top_n 1000 --sort recent --run_pipeline
+
+# Import masky's archive
+ls-twitter-import sheik-tweets \
+  --source zip --zip_path archives/my-twitter-archive.zip --run_pipeline
+```
+
+## Repository structure
 
 ```
 .
-├─ api/                 # Production serving API (Hono, deployed to Vercel)
-├─ web/                 # React frontend (Vite + Deck.GL, deployed to Vercel)
-├─ latentscope/         # Python package: studio server + pipeline scripts
-├─ contracts/           # JSON schemas + shared type contracts
-├─ documentation/       # User docs, deploy guides, internal notes + plans
-├─ tools/               # Repo-level operational scripts (eval, backfill, sync)
-├─ experiments/         # Prototypes and scratch apps
-├─ toponymy/            # Submodule: cluster labeling library (git submodule)
-├─ reports/             # Output artifacts
-└─ data/                # Sample/static data
+├── api/                   # Production serving API (Hono + TypeScript)
+│   ├── src/routes/        #   search, data, catalog, graph, resolve-url
+│   └── src/lib/           #   lancedb, voyageai, graphRepo
+├── web/                   # React frontend (Vite + Deck.GL)
+│   ├── src/api/           #   Typed API clients (catalog, view, graph, query)
+│   ├── src/contexts/      #   ScopeContext, FilterContext
+│   ├── src/hooks/         #   useSidebarState, useCarouselData, useClusterFilter, ...
+│   ├── src/components/    #   Explore/V2 (DeckGLScatter, TopicTree, Carousel, ThreadView)
+│   ├── src/lib/           #   apiService, DuckDB, twitterArchiveParser, colors
+│   └── src/pages/V2/      #   FullScreenExplore (main page)
+├── latentscope/           # Python package
+│   ├── server/            #   Flask app, blueprints (datasets, jobs, search, tags, admin)
+│   ├── scripts/           #   Pipeline CLI (ingest, embed, umap, cluster, label, scope, ...)
+│   ├── models/            #   Embedding + chat model providers
+│   ├── importers/         #   Twitter archive parser
+│   └── util/              #   Config, data directory management
+├── toponymy/              # Git submodule: hierarchical cluster labeling
+│   └── toponymy/          #   cluster_layer, llm_wrappers, prompt_construction, audit
+├── archives/              # Twitter archive zips (gitignored)
+├── contracts/             # JSON schemas (scope_input, links)
+├── tools/                 # Operational scripts (eval, backfill, validate, sync)
+├── documentation/         # Diagrams, deploy guides, notes
+├── experiments/           # Prototypes
+└── reports/               # Eval output artifacts
 ```
 
-### Common commands
+## Data pipeline: step by step
+
+### 0. Ingest
+
+Converts CSV/Parquet/JSON/XLSX into `input.parquet` + `meta.json`. For Twitter archives, `ls-twitter-import` handles zip extraction, deduplication, and optional full-pipeline execution.
+
+### 1. Embed
+
+Encodes the text column into high-dimensional vectors stored as HDF5. Supports local models (HuggingFace sentence-transformers) and API providers (VoyageAI, OpenAI, Cohere, Mistral, Together). Default: `voyageai-voyage-4-lite`.
+
+Resumable — if interrupted, re-running picks up from the last completed batch.
+
+### 2. UMAP
+
+Reduces embeddings to lower dimensions. Two purposes:
+
+- **Display** (`--purpose display`, default): 2D x,y coordinates for the scatter plot
+- **Cluster** (`--purpose cluster --n_components 10`): kD manifold for better HDBSCAN clustering
+
+### 3. Cluster
+
+HDBSCAN clustering on the UMAP output. When a clustering UMAP is available, use `--clustering_umap_id` to cluster on the kD manifold while plotting on the 2D display UMAP.
+
+### 4. Label (Toponymy hierarchical)
+
+The twitter pipeline uses **hierarchical Toponymy labeling** exclusively (enabled by default in `ls-twitter-import --hierarchical-labels`). Multi-layer cluster naming with:
+
+- Adaptive exemplar counts by cluster size
+- Keyphrase extraction via VoyageAI embeddings
+- Sibling context in prompts for disambiguation
+- Post-fit audit loop (flag vague labels → relabel → re-audit)
+- Async LLM wrappers for OpenAI and Anthropic
+
+Flat `ls-label` exists as an upstream CLI command but is not used in the tweetscope pipeline.
+
+### 5. Scope
+
+A scope is a named combination of embedding + UMAP + clusters + labels. Switching between scopes in the UI is instant. The scope JSON ties together all artifact IDs and includes the full cluster label lookup.
+
+### 5b. Links graph
+
+`ls-build-links-graph` extracts reply and quote edges from the dataset, producing `edges.parquet` and `node_stats.parquet` conforming to the `contracts/links.schema.json` contract. Powers the ThreadView and ConnectionBadges in the UI.
+
+### 6. Serve + Explore
+
+The Flask studio server (`ls-serve`) or Hono production API serves the artifacts. The React frontend loads scope rows, builds the cluster hierarchy, and renders the interactive scatter + sidebar.
+
+## Data contracts
+
+### `contracts/scope_input.schema.json`
+
+Required columns: `id`, `ls_index`, `x`, `y`, `cluster`, `label`, `deleted`, `text`
+
+Optional: `raw_cluster`, `created_at`, `username`, `display_name`, `tweet_type`, `favorites`, `retweets`, `replies`, `is_reply`, `is_retweet`, `is_like`, `urls_json`, `media_urls_json`, `archive_source`
+
+### `contracts/links.schema.json`
+
+Edges: `edge_id`, `edge_kind`, `src_tweet_id`, `dst_tweet_id`, `src_ls_index`, `dst_ls_index`, `internal_target`, `provenance`
+
+Node stats: `tweet_id`, `ls_index`, `thread_root_id`, `thread_depth`, `thread_size`, `reply_child_count`, `quote_in_count`, `quote_out_count`
+
+## Dataset directory structure
+
+```
+data/
+└── my-dataset/
+    ├── input.parquet                          # Source data
+    ├── meta.json                              # Dataset metadata
+    ├── embeddings/
+    │   ├── embedding-001.h5                   # Vectors (HDF5)
+    │   └── embedding-001.json                 # Model + params
+    ├── umaps/
+    │   ├── umap-001.parquet                   # 2D display coordinates
+    │   ├── umap-001.json                      # UMAP params
+    │   ├── umap-002.parquet                   # kD clustering manifold
+    │   └── umap-002.json
+    ├── clusters/
+    │   ├── cluster-001.parquet                # Cluster assignments
+    │   ├── cluster-001.json                   # HDBSCAN params
+    │   ├── cluster-001-labels-001.parquet     # LLM-generated labels
+    │   └── cluster-001-labels-001.json
+    ├── scopes/
+    │   └── scopes-001.json                    # Scope config (ties everything together)
+    ├── links/
+    │   ├── edges.parquet                      # Reply/quote edges
+    │   └── node_stats.parquet                 # Thread metrics per node
+    ├── tags/
+    │   └── ❤️.indices                          # User-tagged indices
+    └── jobs/
+        └── <job-id>.json                      # Job status + progress
+```
+
+## CLI reference
+
+| Command | Purpose |
+|---------|---------|
+| `ls-init <data_dir>` | Initialise data directory + .env |
+| `ls-serve [data_dir]` | Start Flask studio server (:5001) |
+| `ls-ingest <dataset_id>` | Ingest from input.csv |
+| `ls-ingest-csv <id> <path>` | Ingest from CSV path |
+| `ls-embed <id> <text_col> <model>` | Generate embeddings |
+| `ls-umap <id> <emb_id> [neighbors] [min_dist]` | UMAP projection |
+| `ls-cluster <id> <umap_id> <samples> <min_samples>` | HDBSCAN clustering |
+| `ls-label <id> <text_col> <cluster_id> <model>` | LLM cluster labeling |
+| `ls-scope <id> <labels_id> <label> <desc>` | Create scope |
+| `ls-twitter-import <id> --source zip\|community` | Twitter archive import |
+| `ls-build-links-graph <id>` | Build reply/quote edge graph |
+| `ls-list-models` | List available models |
+| `ls-download-dataset <id>` | Download public dataset |
+| `ls-upload-dataset <id>` | Upload to remote storage |
+
+## Toponymy integration
+
+The `toponymy/` git submodule provides hierarchical cluster labeling. Called via `latentscope/scripts/toponymy_labels.py`:
 
 ```bash
-# Frontend dev server (port 5173)
-cd web && npm run dev
+uv run python3 -m latentscope.scripts.toponymy_labels my-dataset scopes-001 \
+    --llm-provider openai --llm-model gpt-5-mini \
+    --context "tweets from a tech founder" \
+    --adaptive-exemplars
+```
 
-# Python studio server
-ls-serve ~/latent-scope-data
+Key capabilities:
+- **Multi-layer hierarchy**: Automatic cluster tree with configurable minimum cluster count
+- **Async LLM wrappers**: Parallel naming with OpenAI and Anthropic
+- **Adaptive exemplars**: Exemplar/keyphrase counts scale with cluster size
+- **Sibling context**: Prompts include sibling cluster names for disambiguation
+- **Audit loop**: Post-fit flag → relabel → re-audit cycle for quality
 
-# Build frontend for packaging
-cd web && npx vite build
+## Operational tools
 
-# Run pipeline eval
-uv run python3 tools/eval_hierarchy_labels.py --dataset <id>
+```bash
+# Evaluate label quality with bakeoff comparison
+uv run python3 tools/eval_hierarchy_labels.py --dataset <id> [--compare <labels-id>]
 
-# Backfill scope artifacts
+# Validate scope artifact integrity
+uv run python3 tools/validate_scope_artifacts.py <dataset_path>
+
+# Backfill LanceDB table IDs
 uv run python3 tools/backfill_lancedb_table_id.py <dataset_path>
 
+# Sync to Cloudflare R2 CDN
+uv run python3 tools/sync_cdn_r2.py <dataset_id>
+```
+
+## Design principles
+
+1. **Multiscale topic hierarchy** — Toponymy builds a tree of topics at multiple granularities. The UI reflects this everywhere: the TopicTree lets you navigate broad themes down to fine subtopics, the FeedCarousel shows per-cluster columns, and the scatter plot colours by hierarchy level.
+
+2. **Twitter-native pipeline** — Archive import (native zip + community archive), thread/reply graph extraction, engagement metrics (likes, retweets) used for cluster ranking and UI sorting. The pipeline understands tweets, threads, quotes, and likes as first-class concepts.
+
+3. **Reproducible artifacts** — Pipeline outputs are Parquet, HDF5, and JSON. Every parameter choice is recorded in metadata JSON alongside its output. LanceDB stores vector indices (cloud in production, local for graph tables). DuckDB WASM handles client-side Parquet queries in the browser.
+
+4. **Scopes for comparison** — A scope ties together one embedding + UMAP + cluster + label combination. You can create multiple scopes with different settings and switch between them instantly in the UI.
+
+5. **Contract-driven data flow** — JSON schemas in `contracts/` define column names, types, and nullability for data flowing between pipeline, API, and frontend. The pipeline normalises types on write; typed API clients enforce shapes on read.
+
+## Tech stack
+
+| Layer | Technology |
+|-------|-----------|
+| Python pipeline | Flask, Pandas, NumPy, UMAP-learn, HDBSCAN, HuggingFace Transformers |
+| Production API | Hono (TypeScript), LanceDB Cloud, VoyageAI, Zod, hyparquet |
+| Frontend | React 18, Vite, Deck.GL 9, Framer Motion, TanStack Table, D3, SASS |
+| Storage | Parquet (Apache Arrow), HDF5, JSON, LanceDB (vector search + graph), DuckDB WASM (client-side) |
+| Deploy | Vercel (web + API), Cloudflare R2 (data artifacts) |
+
+## Contributing
+
+See [CONTRIBUTION.md](CONTRIBUTION.md) for guidelines and [DEVELOPMENT.md](DEVELOPMENT.md) for architecture details.
+
+```bash
 # Clone with submodules
 git clone --recurse-submodules <repo-url>
 # or after clone:
 git submodule update --init --recursive
 ```
-
-To learn more about contributing and the project roadmap see [CONTRIBUTION.md](CONTRIBUTION.md), for technical details see [DEVELOPMENT.md](DEVELOPMENT.md).
-
-For Vercel deployment details see [documentation/vercel-deployment.md](documentation/vercel-deployment.md).
-
-### Design principles
-
-This tool is meant to be a part of a larger process. Something that hopefully helps you see things in your data that you wouldn't otherwise have. That means it needs to be easy to get data in, and easily get useful data out.
-
-1. Flat files
-
-- All of the data that drives the app is stored in flat files. This is so that both final and intermediate outputs can easily be exported for other uses. It also makes it easy to see the status of any part of the process.
-
-2. Remember everything
-
-- This tool is intended to aid in research, the purpose is experimentation and exploration. I developed it because far too often I try a lot of things and then I forget what parameters lead me down a promising path in the first place. All choices you make in the process are recorded in metadata files along with the output of the process.
-
-3. It's all about the indices
-
-- We consider an input dataset the source of truth, a list of rows that can be indexed into. So all downstream operations, whether its embeddings, pointing to nearest neighbors or assigning data points to clusters, all use indices into the input dataset.
-
-### Visualization Color Principles (Explore V2)
-
-The V2 graph + sidebar color system follows a few strict rules so interaction states remain legible at scale:
-
-- Separate semantics:
-  Cluster identity uses categorical hue.
-  Interaction state (hover, selected, filtered) uses stroke/size/opacity, not hue-swaps.
-- Use mode-specific palettes:
-  Light mode uses darker accent tones over warm paper backgrounds.
-  Dark mode uses lighter accent tones over dark backgrounds.
-- Keep cross-panel color identity stable:
-  A cluster should keep the same hue in the scatter, hulls, topic tree, search icon, and tweet avatar.
-- Avoid color-only signaling:
-  Selection and hover always include non-color cues for accessibility.
-- Keep label chips subtle:
-  Label backgrounds are map-tinted and low-opacity (not hard white/black blocks).
-- Keep elevation neutral:
-  Use Flexoki-neutral shadow tokens (not pure black ramps) so depth doesn’t introduce a second color system.
-- Keep panel/map harmony:
-  Sidebar glass uses the same base hue family as map background; differences should read as elevation, not palette mismatch.
-- Keep labels non-blocking:
-  Label text should not intercept point hover/click. Use lightweight label anchors for label-click affordance.
-
-Implementation notes:
-
-- Theme tokens: `web/src/latentscope--brand-theme.scss`
-- Cluster palette + scatter labels: `web/src/components/Explore/V2/DeckGLScatter.jsx`
-- Hull/annotation/hover card color sync: `web/src/components/Explore/V2/VisualizationPane.jsx`
-- Topic tree cluster-state color sync: `web/src/components/Explore/V2/TopicTree.jsx`
-- Sidebar layout/motion + panel surfaces: `web/src/pages/V2/FullScreenExplore.jsx`
-- Explore shell styling (rounded clipping, buttons, shadows): `web/src/pages/V2/Explore.css`
-
-References used for the color system:
-
-- Flexoki (palette + token model): https://stephango.com/flexoki
-- ColorBrewer scheme taxonomy: https://colorbrewer2.org/learnmore/schemes_full.html
-- Seaborn palette guidance (categorical vs numeric): https://seaborn.pydata.org/tutorial/color_palettes.html
-- WCAG 2.1, Use of Color: https://www.w3.org/WAI/WCAG21/Understanding/use-of-color.html
-- WCAG 2.1, Non-text Contrast: https://www.w3.org/WAI/WCAG21/Understanding/non-text-contrast.html
-
-## Command Line Scripts: Detailed description
-
-If you want to use the CLI instead of the web UI you can use the following scripts.
-
-The scripts should be run in order once you have an `input.csv` file in your folder. Alternatively the Setup page in the web UI will run these scripts via API calls to the server for you.  
-These scripts expect at the least a `LATENT_SCOPE_DATA` environment variable with a path to where you want to store your data. If you run `ls-serve` it will set the variable and put it in a `.env` file. You can add API keys to the .env file to enable usage of the various API services, see [.env.example](.env.example) for the structure.
-
-For hosted deployments, you can also set `LATENT_SCOPE_APP_MODE`, `LATENT_SCOPE_MAX_UPLOAD_MB`, and `LATENT_SCOPE_JOB_TIMEOUT_SEC`.
-
-### 0. ingest
-
-This script turns the `input.csv` into `input.parquet` and sets up the directories and `meta.json` which run the app.
-
-```bash
-# ls-ingest <dataset_name>
-ls-ingest database-curated
-```
-
-### 0b. twitter import
-
-Import a native X export zip or a community archive, and optionally run the full pipeline:
-
-```bash
-# native X export zip
-ls-twitter-import visakanv --source zip --zip_path ~/Downloads/my-twitter-archive.zip --run_pipeline
-
-# community archive by username
-ls-twitter-import visakanv --source community --username visakanv --run_pipeline
-```
-
-### 1. embed
-
-Take the text from the input and embed it. Default is to use `BAAI/bge-small-en-v1.5` locally via HuggingFace transformers. API services are supported as well, see [latentscope/models/embedding_models.json](latentscope/models/embedding_models.json) for model ids.
-
-```bash
-# you can get a list of models available with:
-ls-list-models
-# ls-embed <dataset_name> <text_column> <model_id>
-ls-embed dadabase joke transformers-intfloat___e5-small-v2
-```
-
-### 2. umap
-
-Map the embeddings from high-dimensional space to 2D with UMAP. Will generate a thumbnail of the scatterplot.
-
-```bash
-# ls-umap <dataset_name> <embedding_id> <neighbors> <min_dist>
-ls-umap dadabase embedding-001 50 0.1
-```
-
-### 3. cluster
-
-Cluster the UMAP points using HDBSCAN. This will label each point with a cluster label
-
-```bash
-# ls-cluster <dataset_name> <umap_id> <samples> <min-samples>
-ls-cluster dadabase umap-001 5 3
-```
-
-### 4. label
-
-We support auto-labeling clusters by summarizing them with an LLM. Supported models and APIs are listed in [latentscope/models/chat_models.json](latentscope/models/chat_models.json).
-You can pass context that will be injected into the system prompt for your dataset.
-
-```bash
-# ls-label <dataset_id> <cluster_id> <chat_model_id> <context>
-ls-label dadabase "joke" cluster-001 openai-gpt-3.5-turbo ""
-```
-
-### 5. scope
-
-The scope command ties together each step of the process to create an explorable configuration. You can have several scopes to view different choices, for example using different embeddings or even different parameters for UMAP and clustering. Switching between scopes in the UI is instant.
-
-```bash
-# ls-scope  <dataset_id> <embedding_id> <umap_id> <cluster_id> <cluster_labels_id> <label> <description>
-ls-scope datavis-misunderstood cluster-001-labels-001 "E5 demo" "E5 embeddings summarized by GPT3.5-Turbo"
-```
-
-### 6. serve
-
-To start the web UI we run a small server. This also enables nearest neighbor similarity search and interactively querying subsets of the input data while exploring the scopes.
-
-```bash
-ls-serve ~/latent-scope-data
-```
-
-## Dataset directory structure
-
-Each dataset will have its own directory in data/ created when you ingest your CSV. All subsequent steps of setting up a dataset write their data and metadata to this directory.
-There are no databases in this tool, just flat files that are easy to copy and edit.
-
-<pre>
-├── data/
-|   ├── dataset1/
-|   |   ├── input.parquet                           # from ingest.py, the dataset
-|   |   ├── meta.json                               # from ingest.py, metadata for dataset, #rows, columns, text_column
-|   |   ├── embeddings/
-|   |   |   ├── embedding-001.h5                    # from embed.py, embedding vectors
-|   |   |   ├── embedding-001.json                  # from embed.py, parameters used to embed
-|   |   |   ├── embedding-002...                   
-|   |   ├── umaps/
-|   |   |   ├── umap-001.parquet                    # from umap.py, x,y coordinates
-|   |   |   ├── umap-001.json                       # from umap.py, params used
-|   |   |   ├── umap-001.png                        # from umap.py, thumbnail of plot
-|   |   |   ├── umap-002....                        
-|   |   ├── clusters/
-|   |   |   ├── clusters-001.parquet                # from cluster.py, cluster indices
-|   |   |   ├── clusters-001-labels-default.parquet # from cluster.py, default labels
-|   |   |   ├── clusters-001-labels-001.parquet     # from label_clusters.py, LLM generated labels
-|   |   |   ├── clusters-001.json                   # from cluster.py, params used
-|   |   |   ├── clusters-001.png                    # from cluster.py, thumbnail of plot
-|   |   |   ├── clusters-002...                     
-|   |   ├── scopes/
-|   |   |   ├── scopes-001.json                     # from scope.py, combination of embed, umap, clusters and label choice
-|   |   |   ├── scopes-...                      
-|   |   ├── tags/
-|   |   |   ├── ❤️.indices                           # tagged by UI, powered by tags.py
-|   |   |   ├── ...                                 # can have arbitrary named tags
-|   |   ├── jobs/
-|   |   |   ├──  8980️-12345...json                  # created when job is run via web UI
-</pre>

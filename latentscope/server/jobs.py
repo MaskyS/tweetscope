@@ -686,7 +686,7 @@ def run_toponymy():
     dataset = request.args.get('dataset')
     scope_id = request.args.get('scope_id')
     llm_provider = request.args.get('llm_provider', 'openai')
-    llm_model = request.args.get('llm_model', 'gpt-4o-mini')
+    llm_model = request.args.get('llm_model', 'gpt-5-mini')
     min_clusters = request.args.get('min_clusters', '2')
     base_min_cluster_size = request.args.get('base_min_cluster_size', '10')
     context = request.args.get('context', '')

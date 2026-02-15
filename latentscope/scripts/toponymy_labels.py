@@ -6,7 +6,7 @@ using Toponymy's clustering and LLM naming capabilities.
 
 Usage:
     python -m latentscope.scripts.toponymy_labels dataset_id scope_id \
-        --llm-provider openai --llm-model gpt-4o-mini
+        --llm-provider openai --llm-model gpt-5-mini
 """
 
 import os
@@ -38,7 +38,7 @@ def main():
     parser.add_argument('--llm-provider', type=str, default='openai',
                         choices=['openai', 'anthropic', 'cohere', 'google'],
                         help='LLM provider for topic naming')
-    parser.add_argument('--llm-model', type=str, default='gpt-4o-mini',
+    parser.add_argument('--llm-model', type=str, default='gpt-5-mini',
                         help='LLM model name')
     parser.add_argument('--min-clusters', type=int, default=2,
                         help='Minimum number of clusters per layer')
@@ -61,7 +61,7 @@ def run_toponymy_labeling(
     dataset_id: str,
     scope_id: str,
     llm_provider: str = "openai",
-    llm_model: str = "gpt-4o-mini",
+    llm_model: str = "gpt-5-mini",
     min_clusters: int = 2,
     base_min_cluster_size: int = 10,
     output_id: str = None,
