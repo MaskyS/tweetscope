@@ -18,7 +18,7 @@ export const viewClient = {
     );
   },
   fetchScopeRows: async (datasetId: string, scopeId: string): Promise<ScopeRow[]> => {
-    return fetch(`${apiUrl}/datasets/${datasetId}/scopes/${scopeId}/parquet`).then((response) =>
+    return fetch(`${apiUrl}/datasets/${datasetId}/views/${scopeId}/rows`).then((response) =>
       parseJson<ScopeRow[]>(response)
     );
   },

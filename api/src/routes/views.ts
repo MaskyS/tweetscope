@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { getTable, getTableColumns } from "../lib/lancedb.js";
+import { getDatasetTable, getTableColumns, resolveDatasetTableId } from "../lib/lancedb.js";
 import {
   DATA_DIR,
   PUBLIC_SCOPE,
@@ -16,6 +16,112 @@ import {
 
 export const viewsRoutes = new Hono();
 
+async function resolveViewTableId(dataset: string, view: string): Promise<string> {
+  const meta = await getScopeMeta(dataset, view);
+  const tableId = meta.lancedb_table_id;
+  const tableIdOrSuffix = typeof tableId === "string" && tableId ? tableId : view;
+  return resolveDatasetTableId(dataset, tableIdOrSuffix);
+}
+
+viewsRoutes.get("/datasets/:dataset/views/:view/meta", async (c) => {
+  const { dataset, view } = c.req.param();
+  try {
+    const meta = await getScopeMeta(dataset, view);
+    return c.json(meta);
+  } catch (err) {
+    console.error(err);
+    return c.json({ error: "View not found" }, 404);
+  }
+});
+
+viewsRoutes.get("/datasets/:dataset/views/:view/cluster-tree", async (c) => {
+  const { dataset, view } = c.req.param();
+  try {
+    const meta = await getScopeMeta(dataset, view);
+    return c.json({
+      hierarchical_labels: meta.hierarchical_labels ?? false,
+      unknown_count: meta.unknown_count ?? 0,
+      cluster_labels_lookup: meta.cluster_labels_lookup ?? [],
+    });
+  } catch (err) {
+    console.error(err);
+    return c.json({ error: "View cluster tree not found" }, 404);
+  }
+});
+
+viewsRoutes.get("/datasets/:dataset/views/:view/points", async (c) => {
+  const { dataset, view } = c.req.param();
+  try {
+    const tableId = await resolveViewTableId(dataset, view);
+    const table = await getDatasetTable(dataset, tableId);
+    const tableCols = await getTableColumns(tableId);
+
+    const selected = ["id", "ls_index", "x", "y", "cluster", "label", "deleted"];
+    const queryCols = selected.filter((col) => tableCols.includes(col));
+
+    const rawRows = (await table.query().select(queryCols).toArray()) as JsonRecord[];
+
+    const normalized = rawRows.map((row, idx) => {
+      const safe = jsonSafe(row) as JsonRecord;
+      const lsIndex = normalizeIndex(safe.ls_index) ?? idx;
+      return { ...safe, ls_index: lsIndex };
+    });
+
+    return c.json(normalized);
+  } catch (err) {
+    console.error(err);
+    return c.json(
+      { error: "view_table_not_found", dataset, view },
+      404
+    );
+  }
+});
+
+viewsRoutes.get("/datasets/:dataset/views/:view/rows", async (c) => {
+  const { dataset, view } = c.req.param();
+
+  // Derive columns from contract
+  const contractRequired = Object.keys(scopeContract.required_columns);
+  const optionalColumns = Object.keys(scopeContract.optional_columns ?? {});
+  const selected = [...new Set([...contractRequired, ...optionalColumns])];
+
+  try {
+    const tableId = await resolveViewTableId(dataset, view);
+    const table = await getDatasetTable(dataset, tableId);
+    const tableCols = await getTableColumns(tableId);
+
+    // Select only serving columns that exist in the table (exclude vector)
+    const queryCols = selected.filter((col) => tableCols.includes(col) && col !== "vector");
+
+    const rawRows = (await table
+      .query()
+      .select(queryCols)
+      .toArray()) as JsonRecord[];
+
+    const normalized = rawRows.map((row, idx) => {
+      const safe = jsonSafe(row) as JsonRecord;
+      const lsIndex = normalizeIndex(safe.ls_index) ?? idx;
+      return { ...safe, ls_index: lsIndex };
+    });
+
+    const violation = validateRequiredColumns(normalized, dataset, view);
+    if (violation) {
+      console.error(
+        `Schema contract violation for ${dataset}/${view}: missing [${violation.missing_columns.join(", ")}]`,
+      );
+      return c.json(violation, 500);
+    }
+
+    return c.json(normalized);
+  } catch (err) {
+    console.error(err);
+    return c.json(
+      { error: "view_table_not_found", dataset, view },
+      404
+    );
+  }
+});
+
 viewsRoutes.get("/datasets/:dataset/scopes/:scope/parquet", async (c) => {
   const { dataset, scope } = c.req.param();
 
@@ -27,7 +133,7 @@ viewsRoutes.get("/datasets/:dataset/scopes/:scope/parquet", async (c) => {
   // Try LanceDB first
   try {
     const tableId = await resolveLanceTableId(dataset, scope);
-    const table = await getTable(tableId);
+    const table = await getDatasetTable(dataset, tableId);
     const tableCols = await getTableColumns(tableId);
 
     // Select only serving columns that exist in the table (exclude vector)

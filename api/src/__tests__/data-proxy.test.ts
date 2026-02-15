@@ -23,6 +23,41 @@ function startUpstream(): Promise<Upstream> {
         return;
       }
 
+      if (url.startsWith("/api/datasets/foo/scopes/scopes-001/parquet")) {
+        res.statusCode = 200;
+        res.setHeader("Content-Type", "application/json");
+        res.end(
+          JSON.stringify([
+            {
+              id: "t1",
+              ls_index: 1,
+              x: 0.1,
+              y: 0.2,
+              cluster: 7,
+              label: "hello",
+              deleted: false,
+              extra_field: "ignored",
+            },
+            { id: "t2", ls_index: 2, x: 0.3, y: 0.4, cluster: 7 },
+          ])
+        );
+        return;
+      }
+
+      if (url.startsWith("/api/datasets/foo/scopes/scopes-001")) {
+        res.statusCode = 200;
+        res.setHeader("Content-Type", "application/json");
+        res.end(
+          JSON.stringify({
+            hierarchical_labels: true,
+            unknown_count: 3,
+            cluster_labels_lookup: [{ cluster: 7, label: "hello" }],
+            extra: "ignored",
+          })
+        );
+        return;
+      }
+
       let body = "";
       for await (const chunk of req) {
         body += chunk.toString("utf-8");
@@ -88,6 +123,55 @@ describe("data proxy mode", () => {
     const body = (await res.json()) as Record<string, unknown>;
     assert.equal(body.url, "/api/datasets/my%20dataset/meta?x=1");
     assert.equal(body.method, "GET");
+  });
+
+  it("rewrites /views/:view/rows to legacy /scopes/:scope/parquet upstream path", async () => {
+    process.env.DATA_URL = upstream.baseUrl;
+    const { dataRoutes } = await importFreshDataRoutes();
+
+    const res = await dataRoutes.fetch(
+      new Request("http://local/datasets/foo/views/scopes-777/rows?x=1")
+    );
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as Record<string, unknown>;
+    assert.equal(body.url, "/api/datasets/foo/scopes/scopes-777/parquet?x=1");
+    assert.equal(body.method, "GET");
+  });
+
+  it("transforms /views/:view/cluster-tree to the reduced meta shape", async () => {
+    process.env.DATA_URL = upstream.baseUrl;
+    const { dataRoutes } = await importFreshDataRoutes();
+
+    const res = await dataRoutes.fetch(
+      new Request("http://local/datasets/foo/views/scopes-001/cluster-tree")
+    );
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as Record<string, unknown>;
+    assert.deepEqual(body, {
+      hierarchical_labels: true,
+      unknown_count: 3,
+      cluster_labels_lookup: [{ cluster: 7, label: "hello" }],
+    });
+  });
+
+  it("projects /views/:view/points from legacy parquet rows", async () => {
+    process.env.DATA_URL = upstream.baseUrl;
+    const { dataRoutes } = await importFreshDataRoutes();
+
+    const res = await dataRoutes.fetch(new Request("http://local/datasets/foo/views/scopes-001/points"));
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as Array<Record<string, unknown>>;
+    assert.equal(body.length, 2);
+    assert.deepEqual(body[0], {
+      id: "t1",
+      ls_index: 1,
+      x: 0.1,
+      y: 0.2,
+      cluster: 7,
+      label: "hello",
+      deleted: false,
+    });
+    assert.deepEqual(body[1], { id: "t2", ls_index: 2, x: 0.3, y: 0.4, cluster: 7 });
   });
 
   it("proxies allowlisted POST body and content-type", async () => {

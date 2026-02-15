@@ -89,11 +89,46 @@ export async function getGraphTable(
   dataset: string,
   tableSuffix: string,
 ): Promise<lancedb.Table> {
-  const tableId = `${dataset}__${tableSuffix}`;
+  return getDatasetTable(dataset, tableSuffix);
+}
+
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export function resolveDatasetTableId(dataset: string, tableIdOrSuffix: string): string {
+  if (tableIdOrSuffix.includes("__")) return tableIdOrSuffix;
+  if (UUID_RE.test(tableIdOrSuffix)) {
+    return `${dataset}__${tableIdOrSuffix}`;
+  }
+  // Treat simple identifiers like "edges" / "node_stats" as dataset-scoped suffixes.
+  // Legacy table ids like "scopes-001" include "-" and are used as-is.
+  if (/^[a-z][a-z0-9_]*$/i.test(tableIdOrSuffix)) {
+    return `${dataset}__${tableIdOrSuffix}`;
+  }
+  // Treat as a legacy full table id (e.g. "scopes-001") and open as-is.
+  return tableIdOrSuffix;
+}
+
+/**
+ * Open a dataset-scoped table local-first (if LATENT_SCOPE_DATA is set),
+ * else fall back to the cloud connection.
+ *
+ * Accepts either:
+ * - suffix form: "edges" → "{dataset}__edges"
+ * - full table id: "{dataset}__{uuid}" → used as-is
+ * - legacy table id: "scopes-001" → used as-is
+ */
+export async function getDatasetTable(
+  dataset: string,
+  tableIdOrSuffix: string,
+): Promise<lancedb.Table> {
+  const tableId = resolveDatasetTableId(dataset, tableIdOrSuffix);
+
   const cached = tables.get(tableId);
   if (cached) return cached;
 
   const dataDir = process.env.LATENT_SCOPE_DATA;
+  let localError: unknown = null;
   if (dataDir) {
     const expandedDir = dataDir.startsWith("~/")
       ? `${process.env.HOME ?? ""}/${dataDir.slice(2)}`
@@ -104,12 +139,19 @@ export async function getGraphTable(
       const table = await localConn.openTable(tableId);
       tables.set(tableId, table);
       return table;
-    } catch {
-      // Table doesn't exist locally, try cloud
+    } catch (err) {
+      // Table doesn't exist locally, try cloud (if configured).
+      localError = err;
     }
   }
 
   // Fallback: cloud connection
+  if (!process.env.LANCEDB_URI) {
+    throw localError ?? new Error("LANCEDB_URI must be set");
+  }
+  if (localError) {
+    console.warn(`Local LanceDB open failed for ${dataset}/${tableId}; falling back to cloud`, localError);
+  }
   const conn = await getDb();
   const table = await conn.openTable(tableId);
   tables.set(tableId, table);
