@@ -138,7 +138,7 @@ function expandHome(p: string): string {
   return p;
 }
 
-export function isApiDataUrl(): boolean {
+function isApiDataUrl(): boolean {
   return Boolean(RAW_DATA_URL && RAW_DATA_URL.endsWith("/api"));
 }
 
@@ -299,38 +299,6 @@ async function asyncBufferFromLocalFile(filename: string): Promise<AsyncBuffer> 
       });
     },
   };
-}
-
-export async function proxyDataApi(
-  method: string,
-  endpointPath: string,
-  query = "",
-  body?: unknown
-): Promise<Response> {
-  if (!RAW_DATA_URL || !isApiDataUrl()) {
-    throw new Error("DATA_URL is not configured as API proxy");
-  }
-
-  const url = `${RAW_DATA_URL}${endpointPath}${query ? `?${query}` : ""}`;
-  const init: RequestInit = {
-    method,
-    headers: { "Content-Type": "application/json" },
-  };
-
-  if (body !== undefined && method !== "GET") {
-    init.body = JSON.stringify(body);
-  }
-
-  return fetch(url, init);
-}
-
-export function passthrough(res: Response): Response {
-  return new Response(res.body, {
-    status: res.status,
-    headers: {
-      "Content-Type": res.headers.get("Content-Type") ?? "application/json",
-    },
-  });
 }
 
 export function resolveScopeId(payload: JsonRecord): string | null {
@@ -501,4 +469,3 @@ export function buildFilterWhere(filters: unknown): string | null {
   if (clauses.length === 0) return null;
   return clauses.join(" AND ");
 }
-

@@ -1,10 +1,7 @@
 import { Hono } from "hono";
 import { lanceGraphRepo } from "../lib/graphRepo.js";
 import {
-  isApiDataUrl,
   normalizeIndex,
-  passthrough,
-  proxyDataApi,
   type JsonRecord,
 } from "./dataShared.js";
 
@@ -16,10 +13,6 @@ graphRoutes.get("/datasets/:dataset/links/meta", async (c) => {
     const meta = await lanceGraphRepo.getLinksMeta(dataset);
     return c.json(meta);
   } catch {
-    if (isApiDataUrl()) {
-      const res = await proxyDataApi("GET", `/datasets/${dataset}/links/meta`);
-      return passthrough(res);
-    }
     return c.json({ error: "Links graph not found for dataset" }, 404);
   }
 });
@@ -56,10 +49,6 @@ graphRoutes.get("/datasets/:dataset/links/node-stats", async (c) => {
 
     return c.json(result);
   } catch {
-    if (isApiDataUrl()) {
-      const res = await proxyDataApi("GET", `/datasets/${dataset}/links/node-stats`);
-      return passthrough(res);
-    }
     return c.json({ error: "Node link stats not found for dataset" }, 404);
   }
 });
@@ -109,15 +98,6 @@ graphRoutes.post("/datasets/:dataset/links/by-indices", async (c) => {
       truncated: total > out.length,
     });
   } catch {
-    if (isApiDataUrl()) {
-      const res = await proxyDataApi(
-        "POST",
-        `/datasets/${dataset}/links/by-indices`,
-        "",
-        payload,
-      );
-      return passthrough(res);
-    }
     return c.json({ error: "Links graph not found for dataset" }, 404);
   }
 });
@@ -140,10 +120,6 @@ graphRoutes.get("/datasets/:dataset/links/thread/:tweetId", async (c) => {
       edges: result.edges,
     });
   } catch {
-    if (isApiDataUrl()) {
-      const res = await proxyDataApi("GET", `/datasets/${dataset}/links/thread/${tweetId}`);
-      return passthrough(res);
-    }
     return c.json({ error: "Links graph not found for dataset" }, 404);
   }
 });
@@ -165,10 +141,6 @@ graphRoutes.get("/datasets/:dataset/links/quotes/:tweetId", async (c) => {
         result.incomingTotal > result.incoming.length,
     });
   } catch {
-    if (isApiDataUrl()) {
-      const res = await proxyDataApi("GET", `/datasets/${dataset}/links/quotes/${tweetId}`);
-      return passthrough(res);
-    }
     return c.json({ error: "Links graph not found for dataset" }, 404);
   }
 });

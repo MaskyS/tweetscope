@@ -10,12 +10,9 @@ import {
   ensureSafeRelativePath,
   fileExists,
   getScopeMeta,
-  isApiDataUrl,
   listDatasetsFromDataDir,
   listJsonObjects,
   loadJsonFile,
-  passthrough,
-  proxyDataApi,
 } from "./dataShared.js";
 
 export const catalogRoutes = new Hono();
@@ -26,10 +23,6 @@ catalogRoutes.get("/datasets/:dataset/meta", async (c) => {
     const meta = await loadJsonFile(`${dataset}/meta.json`);
     return c.json(meta);
   } catch {
-    if (isApiDataUrl()) {
-      const res = await proxyDataApi("GET", `/datasets/${dataset}/meta`);
-      return passthrough(res);
-    }
     return c.json({ error: "Dataset metadata not found" }, 404);
   }
 });
@@ -45,10 +38,6 @@ catalogRoutes.get("/datasets/:dataset/scopes", async (c) => {
     const scopes = await listJsonObjects(`${dataset}/scopes`, /.*[0-9]+\.json$/);
     return c.json(scopes);
   } catch {
-    if (isApiDataUrl()) {
-      const res = await proxyDataApi("GET", `/datasets/${dataset}/scopes`);
-      return passthrough(res);
-    }
     return c.json({ error: "Scopes not found" }, 404);
   }
 });
@@ -59,20 +48,11 @@ catalogRoutes.get("/datasets/:dataset/scopes/:scope", async (c) => {
     const scopeMeta = await getScopeMeta(dataset, scope);
     return c.json(scopeMeta);
   } catch {
-    if (isApiDataUrl()) {
-      const res = await proxyDataApi("GET", `/datasets/${dataset}/scopes/${scope}`);
-      return passthrough(res);
-    }
     return c.json({ error: "Scope not found" }, 404);
   }
 });
 
 catalogRoutes.get("/tags", async (c) => {
-  if (isApiDataUrl()) {
-    const query = c.req.url.split("?")[1] ?? "";
-    const res = await proxyDataApi("GET", "/tags", query);
-    return passthrough(res);
-  }
   return c.json({});
 });
 
@@ -117,10 +97,6 @@ catalogRoutes.get("/files/:filePath{.+}", async (c) => {
 
 // Optional dataset listing for non-single-profile flows when backed by legacy API.
 catalogRoutes.get("/datasets", async () => {
-  if (isApiDataUrl()) {
-    const res = await proxyDataApi("GET", "/datasets");
-    return passthrough(res);
-  }
   const localDatasets = await listDatasetsFromDataDir();
   if (localDatasets.length > 0) {
     return new Response(JSON.stringify(localDatasets), {

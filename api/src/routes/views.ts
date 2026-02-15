@@ -4,13 +4,10 @@ import {
   DATA_DIR,
   PUBLIC_SCOPE,
   getScopeMeta,
-  isApiDataUrl,
   jsonSafe,
   listJsonObjects,
   loadParquetRows,
   normalizeIndex,
-  passthrough,
-  proxyDataApi,
   resolveLanceTableId,
   scopeContract,
   validateRequiredColumns,
@@ -76,10 +73,6 @@ viewsRoutes.get("/datasets/:dataset/scopes/:scope/parquet", async (c) => {
 
       return c.json(normalized);
     } catch {
-      if (isApiDataUrl()) {
-        const res = await proxyDataApi("GET", `/datasets/${dataset}/scopes/${scope}/parquet`);
-        return passthrough(res);
-      }
       return c.json({ error: "Scope parquet not found" }, 404);
     }
   }
@@ -97,15 +90,8 @@ viewsRoutes.get("/datasets/:dataset/embeddings", async (c) => {
     const embeddings = await listJsonObjects(`${dataset}/embeddings`, /.*\.json$/);
     return c.json(embeddings);
   } catch {
-    // Fallback below.
+    return c.json([]);
   }
-
-  if (isApiDataUrl()) {
-    const res = await proxyDataApi("GET", `/datasets/${dataset}/embeddings`);
-    return passthrough(res);
-  }
-
-  return c.json([]);
 });
 
 viewsRoutes.get("/datasets/:dataset/clusters", async (c) => {
@@ -120,10 +106,6 @@ viewsRoutes.get("/datasets/:dataset/clusters", async (c) => {
     const clusters = await listJsonObjects(`${dataset}/clusters`, /^cluster-\d+\.json$/);
     return c.json(clusters);
   } catch {
-    if (isApiDataUrl()) {
-      const res = await proxyDataApi("GET", `/datasets/${dataset}/clusters`);
-      return passthrough(res);
-    }
     return c.json([]);
   }
 });
@@ -144,10 +126,6 @@ viewsRoutes.get("/datasets/:dataset/clusters/:cluster/labels_available", async (
     );
     return c.json(labels);
   } catch {
-    if (isApiDataUrl()) {
-      const res = await proxyDataApi("GET", `/datasets/${dataset}/clusters/${cluster}/labels_available`);
-      return passthrough(res);
-    }
     return c.json([]);
   }
 });
@@ -161,13 +139,6 @@ viewsRoutes.get("/datasets/:dataset/clusters/:cluster/labels/:labelId", async (c
     const withIndex = rows.map((row, index) => ({ index, ...row }));
     return c.json(withIndex);
   } catch {
-    if (isApiDataUrl()) {
-      const res = await proxyDataApi(
-        "GET",
-        `/datasets/${dataset}/clusters/${cluster}/labels/${labelId}`
-      );
-      return passthrough(res);
-    }
     return c.json({ error: "Cluster labels not found" }, 404);
   }
 });
