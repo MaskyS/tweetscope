@@ -2,10 +2,6 @@ import { stat } from "node:fs/promises";
 
 import { RAW_DATA_URL } from "./env.js";
 
-function isApiDataUrl(): boolean {
-  return Boolean(RAW_DATA_URL && RAW_DATA_URL.endsWith("/api"));
-}
-
 export async function fileExists(fullPath: string): Promise<boolean> {
   try {
     await stat(fullPath);
@@ -30,8 +26,5 @@ export function buildFileUrl(relativePath: string): string {
     .split("/")
     .map((segment) => encodeURIComponent(segment))
     .join("/");
-  return isApiDataUrl()
-    ? `${RAW_DATA_URL}/files/${encodedPath}`
-    : `${RAW_DATA_URL}/${encodedPath}`;
+  return `${RAW_DATA_URL}/${encodedPath}`;
 }
-
