@@ -5,12 +5,10 @@ import { useScope } from './ScopeContext'; // Assuming this provides scopeRows, 
 import useColumnFilter from '../hooks/useColumnFilter';
 import useNearestNeighborsSearch from '../hooks/useNearestNeighborsSearch';
 import useClusterFilter from '../hooks/useClusterFilter';
-import useFeatureFilter from '../hooks/useFeatureFilter';
 import { apiService } from '../lib/apiService';
 
 import {
   filterConstants,
-  findFeatureLabel,
   validateColumnAndValue,
 } from '../components/Explore/V2/Search/utils';
 
@@ -28,7 +26,6 @@ export function FilterProvider({ children }) {
   const [urlParams, setUrlParams] = useSearchParams();
   // Pull shared data from a higher-level context.
   const {
-    features,
     scopeRows,
     deletedIndices,
     userId,
@@ -45,7 +42,6 @@ export function FilterProvider({ children }) {
 
   // Column filter
   const columnFilter = useColumnFilter(userId, datasetId, scope);
-  const featureFilter = useFeatureFilter({ userId, datasetId, scope, scopeLoaded });
   const clusterFilter = useClusterFilter({ scopeRows, scope, scopeLoaded });
   const searchFilter = useNearestNeighborsSearch({ userId, datasetId, scope, deletedIndices });
 
@@ -53,7 +49,6 @@ export function FilterProvider({ children }) {
     return (
       urlParams.has('column') ||
       urlParams.has('cluster') ||
-      urlParams.has('feature') ||
       urlParams.has('search')
     );
   }, [urlParams]);
@@ -83,18 +78,6 @@ export function FilterProvider({ children }) {
           label: cluster.label,
         });
       }
-    } else if (key === filterConstants.FEATURE) {
-      const featureLabel = findFeatureLabel(features, numericValue);
-      if (featureLabel) {
-        const { setFeature } = featureFilter;
-        setFeature(numericValue);
-        setFilterQuery(featureLabel);
-        setFilterConfig({
-          type: filterConstants.FEATURE,
-          value: numericValue,
-          label: featureLabel,
-        });
-      }
     } else if (urlParams.has('column') && urlParams.has('value')) {
       const value = urlParams.get('value');
       const column = urlParams.get('column');
@@ -109,7 +92,7 @@ export function FilterProvider({ children }) {
         });
       }
     }
-  }, [features, urlParams, scopeLoaded]);
+  }, [urlParams, scopeLoaded]);
 
   // ==== Filtering ====
   // compute filteredIndices based on the active filter.
@@ -136,15 +119,6 @@ export function FilterProvider({ children }) {
           case filterConstants.SEARCH: {
             const { filter } = searchFilter;
             indices = await filter(value);
-            break;
-          }
-          case filterConstants.FEATURE: {
-            const { setFeature, filter } = featureFilter;
-            const featureLabel = findFeatureLabel(features, parseInt(value));
-            if (featureLabel) {
-              setFeature(value);
-              indices = await filter();
-            }
             break;
           }
           case filterConstants.COLUMN: {
@@ -222,7 +196,7 @@ export function FilterProvider({ children }) {
       }
 
       apiService
-        .fetchDataFromIndices(datasetId, nonDeletedIndices, scope?.sae_id, scope?.id)
+        .fetchDataFromIndices(datasetId, nonDeletedIndices, scope?.id)
         .then((rows) => {
           // Only update state if this is the latest request.
           if (lastRequestRef.current !== requestTimestamp) {
@@ -265,7 +239,6 @@ export function FilterProvider({ children }) {
     setFilterActive,
     searchFilter,
     clusterFilter,
-    featureFilter,
     columnFilter,
     setUrlParams,
     dataTableRows,
@@ -273,7 +246,7 @@ export function FilterProvider({ children }) {
     filterConfig, setFilterConfig, filterQuery, setFilterQuery,
     filteredIndices, shownIndices, page, setPage, totalPages, ROWS_PER_PAGE,
     loading, setLoading, filterActive, setFilterActive,
-    searchFilter, clusterFilter, featureFilter, columnFilter,
+    searchFilter, clusterFilter, columnFilter,
     setUrlParams, dataTableRows,
   ]);
 

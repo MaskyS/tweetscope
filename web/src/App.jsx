@@ -90,15 +90,6 @@ function App() {
               <Route path="/" element={<Navigate to="/import" replace />} />
               <Route path="/import" element={<Home appConfig={appConfig} />} />
               <Route path="/datasets/:dataset/explore/:scope" element={<Explore />} />
-              <Route path="/settings" element={<Navigate to="/import" replace />} />
-              <Route path="/datasets/:dataset/setup" element={<Navigate to="/import" replace />} />
-              <Route path="/datasets/:dataset/setup/:scope" element={<Navigate to="/import" replace />} />
-              <Route path="/datasets/:dataset/jobs" element={<Navigate to="/import" replace />} />
-              <Route path="/datasets/:dataset/jobs/:scope" element={<Navigate to="/import" replace />} />
-              <Route path="/datasets/:dataset/compare/" element={<Navigate to="/import" replace />} />
-              <Route path="/datasets/:dataset/export" element={<Navigate to="/import" replace />} />
-              <Route path="/datasets/:dataset/export/:scope" element={<Navigate to="/import" replace />} />
-              <Route path="/datasets/:dataset/plot/:scope" element={<Navigate to="/import" replace />} />
               <Route path="*" element={<Navigate to="/import" replace />} />
             </>
           )}

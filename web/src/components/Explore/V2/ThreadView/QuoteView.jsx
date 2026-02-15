@@ -55,7 +55,6 @@ export default function QuoteView({
           const rows = await queryClient.fetchDataFromIndices(
             datasetId,
             Array.from(allIndices),
-            null,
             scopeId
           );
           if (cancelled || requestId !== requestIdRef.current) return;

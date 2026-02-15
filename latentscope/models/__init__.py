@@ -1,9 +1,5 @@
 import json
-from .providers.transformers import TransformersEmbedProvider, TransformersChatProvider
 from .providers.openai import OpenAIEmbedProvider, OpenAIChatProvider
-from .providers.mistralai import MistralAIEmbedProvider, MistralAIChatProvider
-from .providers.cohereai import CohereAIEmbedProvider
-from .providers.togetherai import TogetherAIEmbedProvider
 from .providers.voyageai import VoyageAIEmbedProvider
 from .providers.nltk import NLTKChatProvider
 from .providers.litellm_provider import LiteLLMChatProvider
@@ -33,36 +29,13 @@ def get_embedding_model_dict(id):
 
 def get_embedding_model(id):
     """Returns a ModelProvider instance for the given model id."""
+    model = get_embedding_model_dict(id)
 
-    # For backwards compatibility with the old preset transformers models 
-    # (all of which were also HF sentence transformers)
-    if id.startswith("transformers-"):
-        id = id.replace("transformers-", "🤗-")
-    if id.startswith("🤗-"):
-        # If the model id is a HF sentence transformers model, we get the model id
-        # by replacing "/" with "___"
-        # Then huggingface will take care of finding the model
-        model_name = id.split("🤗-")[1].replace("___", "/")
-        model = {
-            "provider": "🤗",
-            "name": model_name,
-            "params": {}
-        }
-    else:
-        model = get_embedding_model_dict(id)
-      
-    if model['provider'] == "🤗":
-        return TransformersEmbedProvider(model['name'], model['params'])
     if model['provider'] == "openai":
         return OpenAIEmbedProvider(model['name'], model['params'])
-    if model['provider'] == "mistralai":
-        return MistralAIEmbedProvider(model['name'], model['params'])
-    if model['provider'] == "cohereai":
-        return CohereAIEmbedProvider(model['name'], model['params'])
-    if model['provider'] == "togetherai":
-        return TogetherAIEmbedProvider(model['name'], model['params'])
     if model['provider'] == "voyageai":
         return VoyageAIEmbedProvider(model['name'], model['params'])
+    raise ValueError(f"Unsupported embedding provider: {model['provider']}")
 
 
 def get_chat_model_list():
@@ -83,37 +56,11 @@ def get_chat_model_dict(id):
 
 def get_chat_model(id):
     """Returns a ModelProvider instance for the given model id."""
-    # For backwards compatibility with the old preset transformers models
-    if id.startswith("transformers-"):
-        id = id.replace("transformers-", "🤗-")
-    if id.startswith("🤗-"):
-        # If the model id is a HF model, we get the model name
-        # by replacing "/" with "___"
-        model_name = id.split("🤗-")[1].replace("___", "/")
-        model = {
-            "provider": "🤗",
-            "name": model_name,
-            "params": {}
-        }
-    elif id.startswith("custom-"):
-        # Get custom model from custom_models.json
-        import os
-        from latentscope.util import get_data_dir
-        DATA_DIR = get_data_dir()
-        custom_models_path = os.path.join(DATA_DIR, "custom_models.json")
-        if os.path.exists(custom_models_path):
-            with open(custom_models_path, "r") as f:
-                custom_models = json.load(f)
-            model = next((m for m in custom_models if m["id"] == id), None)
-            if model is None:
-                raise ValueError(f"Custom model {id} not found")
-        else:
-            raise ValueError("No custom models found")
-    elif id.startswith("ollama-"):
+    if id.startswith("ollama-"):
         model = {
             "provider": "ollama",
             "name": id.split("ollama-")[1],
-            "url": "http://localhost:11434/v1", # TODO: this should be passed in somehow?
+            "url": "http://localhost:11434/v1",
             "params": {}
         }
     elif id.startswith("litellm-"):
@@ -125,19 +72,14 @@ def get_chat_model(id):
         }
     else:
         model = get_chat_model_dict(id)
-    
-    if model['provider'] == "🤗":
-        return TransformersChatProvider(model['name'], model['params'])
+
     if model['provider'] == "openai":
         return OpenAIChatProvider(model['name'], model['params'])
-    if model['provider'] == "custom":
-        return OpenAIChatProvider(model['name'], model['params'], base_url=model['url'])
     if model['provider'] == "ollama":
         return OpenAIChatProvider(model['name'], model['params'], base_url=model['url'])
-    if model['provider'] == "mistralai":
-        return MistralAIChatProvider(model['name'], model['params'])
     if model['provider'] == "nltk":
         return NLTKChatProvider(model['name'], model['params'])
     if model['provider'] == "litellm":
         return LiteLLMChatProvider(model['name'], model['params'])
+    raise ValueError(f"Unsupported chat provider: {model['provider']}")
 

@@ -100,7 +100,6 @@ function ExploreContent() {
     shownIndices,
     filterConfig,
     setFilterQuery,
-    featureFilter,
     clusterFilter,
     searchFilter,
     setFilterConfig,
@@ -1038,20 +1037,6 @@ function ExploreContent() {
       }
     }
   }, [sidebarMode, focusedClusterIndex, carouselData.topLevelClusters, scopeRows]);
-
-  const handleFeatureClick = useCallback(
-    (featIdx, activation, label) => {
-      setFilterQuery(label);
-      setFilterConfig({ type: filterConstants.FEATURE, value: featIdx, label });
-      featureFilter.setFeature(featIdx);
-      setFilterActive(true);
-      setUrlParams((prev) => {
-        prev.set('feature', featIdx);
-        return new URLSearchParams(prev);
-      });
-    },
-    [featureFilter.setFeature, setFilterQuery, setFilterConfig, setFilterActive, setUrlParams]
-  );
 
   const sidebarPaneStyle = useMemo(() => {
     if (isExpanded) {

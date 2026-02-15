@@ -105,7 +105,7 @@ export default function useCarouselData(focusedClusterIndex, enabled = true) {
       }));
 
       queryClient
-        .fetchDataFromIndices(dataset.id, pageIndices, scope?.sae_id, scope?.id)
+        .fetchDataFromIndices(dataset.id, pageIndices, scope?.id)
         .then((rows) => {
           // Map rows to include ls_index and idx (same as FilterContext does)
           const mappedRows = rows.map((row, i) => ({

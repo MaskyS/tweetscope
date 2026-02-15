@@ -24,7 +24,6 @@ const Container = () => {
   const { clusterLabels, scopeLoaded } = useScope();
   const {
     searchFilter,
-    featureFilter,
     clusterFilter,
     filterQuery,
     setFilterQuery,
@@ -79,7 +78,6 @@ const Container = () => {
 
     setUrlParams((prev) => {
       prev.delete('cluster');
-      prev.delete('feature');
       prev.delete('search');
       prev.delete('column');
       prev.delete('value');
@@ -101,9 +99,6 @@ const Container = () => {
     } else if (type === filterConstants.CLUSTER) {
       const { clear } = clusterFilter;
       clear();
-    } else if (type === filterConstants.FEATURE) {
-      const { clear } = featureFilter;
-      clear();
     } else if (type === filterConstants.COLUMN) {
       const { clear } = columnFilter;
       clear();
@@ -117,7 +112,6 @@ const Container = () => {
     // delete all filter params from the url
     setUrlParams((prev) => {
       prev.delete('cluster');
-      prev.delete('feature');
       prev.delete('search');
       prev.delete('column');
       prev.delete('value');
@@ -202,11 +196,9 @@ const SearchResultsMetadata = ({ filterConfig }) => {
   const headerLabel =
     type === filterConstants.CLUSTER
       ? 'Cluster'
-      : type === filterConstants.FEATURE
-        ? 'Feature'
-        : type === filterConstants.COLUMN
-          ? 'Column'
-          : 'Nearest Neighbor Search';
+      : type === filterConstants.COLUMN
+        ? 'Column'
+        : 'Nearest Neighbor Search';
 
   return (
     <div className={styles.searchResultsMetadata}>

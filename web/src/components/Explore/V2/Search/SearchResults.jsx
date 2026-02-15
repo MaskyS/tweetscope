@@ -5,7 +5,7 @@ import Select, { components } from 'react-select';
 import styles from './SearchResults.module.scss';
 import { Button } from 'react-element-forge';
 import { useScope } from '@/contexts/ScopeContext';
-import { filterConstants, findFeaturesByQuery, findClustersByQuery } from './utils';
+import { filterConstants, findClustersByQuery } from './utils';
 import useColumnFilter from '@/hooks/useColumnFilter';
 import { useColorMode } from '@/hooks/useColorMode';
 import { getClusterColorCSS } from '../DeckGLScatter';
@@ -13,7 +13,6 @@ import ClusterIcon from './ClusterIcon';
 
 const COLUMNS = 'Columns';
 const CLUSTERS = 'Clusters';
-const FEATURES = 'Features';
 
 // Function to underline the search term
 const underlineText = (text, query) => {
@@ -62,9 +61,6 @@ const Option = (props) => {
       onSelect({ type: filterConstants.CLUSTER, value: data.value, label: data.label });
       const label = `Cluster ${data.value}`;
       setFilterQuery(label);
-    } else if (groupType === FEATURES) {
-      onSelect({ type: filterConstants.FEATURE, value: data.value, label: data.label });
-      setFilterQuery(data.label);
     }
   };
 
@@ -98,8 +94,6 @@ const Option = (props) => {
     switch (type) {
       case 'Clusters':
         return 'cloud';
-      case 'Features':
-        return 'compass';
       case 'Columns':
         return 'columns';
       default:
@@ -168,14 +162,9 @@ const CustomMenu = ({ children, ...props }) => {
 export const NUM_SEARCH_RESULTS = 4;
 
 const SearchResults = ({ query, menuIsOpen, onSelect, setFilterQuery }) => {
-  const { features, userId, datasetId, scope, clusterLabels } = useScope();
+  const { userId, datasetId, scope, clusterLabels } = useScope();
   const columnFilter = useColumnFilter(userId, datasetId, scope);
   const { columnFilters } = columnFilter;
-
-  const featureOptions = useMemo(
-    () => (features.length > 0 ? findFeaturesByQuery(features, query, NUM_SEARCH_RESULTS) : []),
-    [features, query]
-  );
 
   const clusterOptions = useMemo(
     () => findClustersByQuery(clusterLabels, query, NUM_SEARCH_RESULTS),
@@ -226,13 +215,6 @@ const SearchResults = ({ query, menuIsOpen, onSelect, setFilterQuery }) => {
     label: CLUSTERS,
     options: clusterOptions,
   });
-
-  if (featureOptions.length > 0) {
-    groupedOptions.push({
-      label: FEATURES,
-      options: featureOptions,
-    });
-  }
 
   if (columnOptions.length > 0) {
     groupedOptions.push({

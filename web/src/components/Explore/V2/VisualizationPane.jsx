@@ -163,10 +163,10 @@ const VisualizationPane = forwardRef(function VisualizationPane({
   onViewQuotes,
   threadHighlightIndices = null,
 }, ref) {
-  const { scopeRows, scope, features } = useScope();
+  const { scopeRows, scope } = useScope();
   const { isDark: isDarkMode } = useColorMode();
 
-  const { featureFilter, clusterFilter, shownIndices, filterConfig, filteredIndices } = useFilter();
+  const { clusterFilter, shownIndices, filterConfig, filteredIndices } = useFilter();
 
   // only show the hull if we are filtering by cluster
   const showHull = filterConfig?.type === filterConstants.CLUSTER;
@@ -206,29 +206,6 @@ const VisualizationPane = forwardRef(function VisualizationPane({
 
   const size = [width, height];
 
-  const featureIsSelected = featureFilter.feature !== -1;
-
-  // Add new memoized feature activation lookup
-  const featureActivationMap = useMemo(() => {
-    if (!featureIsSelected || !dataTableRows || !shownIndices) {
-      return new Map();
-    }
-
-    const lookup = new Map();
-    dataTableRows.forEach((data, index) => {
-      const activatedIdx = data.sae_indices.indexOf(featureFilter.feature);
-      if (activatedIdx !== -1) {
-        const activatedFeature = data.sae_acts[activatedIdx];
-        // normalize the activation to be between 0 and 1
-        const min = 0.0;
-        const max = features[featureFilter.feature].dataset_max;
-        const normalizedActivation = (activatedFeature - min) / (max - min);
-        lookup.set(data.ls_index, normalizedActivation);
-      }
-    });
-    return lookup;
-  }, [featureIsSelected, dataTableRows, featureFilter.feature, features]);
-
   const isFilterActive = !!filterConfig;
   const filteredIndexSet = useMemo(() => new Set(filteredIndices || []), [filteredIndices]);
 
@@ -255,18 +232,6 @@ const VisualizationPane = forwardRef(function VisualizationPane({
         return [-10, -10, mapSelectionKey.hidden, 0.0, cluster];
       }
 
-      if (featureIsSelected) {
-        const activation = featureActivationMap.get(lsIndex);
-        const selectionKey = isMatch ? mapSelectionKey.selected : mapSelectionKey.notSelected;
-        return [
-          p.x,
-          p.y,
-          selectionKey,
-          selectionKey === mapSelectionKey.selected && activation !== undefined ? activation : 0.0,
-          cluster,
-        ];
-      }
-
       if (isFilterActive || timeRange) {
         return [
           p.x,
@@ -279,7 +244,7 @@ const VisualizationPane = forwardRef(function VisualizationPane({
 
       return [p.x, p.y, mapSelectionKey.normal, 0.0, cluster];
     });
-  }, [scopeRows, featureActivationMap, featureIsSelected, isFilterActive, filteredIndexSet, timeRange, timestamps]);
+  }, [scopeRows, isFilterActive, filteredIndexSet, timeRange, timestamps]);
 
   const points = useMemo(() => {
     return scopeRows
@@ -654,7 +619,6 @@ const VisualizationPane = forwardRef(function VisualizationPane({
             onLabelClick={onLabelClick}
             showClusterOutlines={vizConfig.showClusterOutlines}
             activeClusterId={clusterFilter.cluster?.cluster ?? null}
-            featureIsSelected={featureIsSelected}
             linkEdges={linksEdges}
             showReplyEdges={linksAvailable && vizConfig.showReplyEdges}
             showQuoteEdges={linksAvailable && vizConfig.showQuoteEdges}

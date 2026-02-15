@@ -39,28 +39,9 @@ export const queryClient = {
         };
       });
   },
-  searchSaeFeature: async (
-    datasetId: string,
-    saeId: string,
-    featureId: string | number,
-    threshold: string | number,
-    topN: string | number
-  ): Promise<JsonRecord> => {
-    const searchParams = new URLSearchParams({
-      dataset: datasetId,
-      sae_id: saeId,
-      feature_id: String(featureId),
-      threshold: String(threshold),
-      top_n: String(topN),
-    });
-    return fetch(`${apiUrl}/search/feature?${searchParams.toString()}`).then((response) =>
-      parseJson<JsonRecord>(response)
-    );
-  },
   fetchDataFromIndices: async (
     datasetId: string,
     indices: number[],
-    saeId: string | null,
     scopeId: string | null = null
   ): Promise<Array<JsonRecord & { index: number }>> => {
     return fetch(`${apiUrl}/indexed`, {
@@ -71,7 +52,6 @@ export const queryClient = {
       body: JSON.stringify({
         dataset: datasetId,
         indices,
-        sae_id: saeId,
         ...(scopeId ? { scope_id: scopeId } : {}),
       }),
     })

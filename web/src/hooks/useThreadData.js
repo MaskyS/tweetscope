@@ -64,7 +64,7 @@ export default function useThreadData(datasetId, scopeId, tweetId, currentLsInde
         let rowMap = new Map();
         if (allInternalIndices.size > 0) {
           const indices = Array.from(allInternalIndices);
-          const rows = await queryClient.fetchDataFromIndices(datasetId, indices, null, scopeId);
+          const rows = await queryClient.fetchDataFromIndices(datasetId, indices, scopeId);
           if (cancelled || requestId !== requestIdRef.current) return;
           for (const row of rows) {
             rowMap.set(row.index, row);

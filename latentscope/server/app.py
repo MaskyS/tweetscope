@@ -10,13 +10,12 @@ import requests
 import numpy as np
 import pandas as pd
 from importlib.resources import files
-from dotenv import dotenv_values, set_key
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 from werkzeug.exceptions import RequestEntityTooLarge
 
 # from latentscope.util import update_data_dir
-from latentscope.util import get_data_dir, get_supported_api_keys
+from latentscope.util import get_data_dir
 from latentscope.__version__ import __version__
 
 
@@ -64,20 +63,15 @@ print("APP MODE?", APP_MODE)
 DATAFRAMES = {}
 
 from .jobs import jobs_bp, jobs_write_bp
-app.register_blueprint(jobs_bp, url_prefix='/api/jobs') 
+app.register_blueprint(jobs_bp, url_prefix='/api/jobs')
 if(not READ_ONLY):
-    app.register_blueprint(jobs_write_bp, url_prefix='/api/jobs') 
+    app.register_blueprint(jobs_write_bp, url_prefix='/api/jobs')
 
 from .search import search_bp
-# Search endpoints (NN, SAE features, compare) are studio-only.
+# Search endpoints (NN) are studio-only.
 # In production, NN search is served by the TS API via LanceDB Cloud.
 if APP_MODE == "studio":
     app.register_blueprint(search_bp, url_prefix='/api/search')
-
-from .tags import tags_bp, tags_write_bp
-app.register_blueprint(tags_bp, url_prefix='/api/tags') 
-if(not READ_ONLY):
-    app.register_blueprint(tags_write_bp, url_prefix='/api/tags') 
 
 from .datasets import datasets_bp, datasets_write_bp
 # Read endpoints (datasets_bp) are served by the TS API in production.
@@ -86,20 +80,6 @@ if APP_MODE == "studio":
     app.register_blueprint(datasets_bp, url_prefix='/api/datasets')
 if(not READ_ONLY):
     app.register_blueprint(datasets_write_bp, url_prefix='/api/datasets')
-
-from .bulk import bulk_bp, bulk_write_bp
-app.register_blueprint(bulk_bp, url_prefix='/api/bulk') 
-if(not READ_ONLY):
-    app.register_blueprint(bulk_write_bp, url_prefix='/api/bulk') 
-
-from .admin import admin_bp
-if not READ_ONLY:
-    app.register_blueprint(admin_bp, url_prefix='/api/admin') 
-
-from .models import models_bp, models_write_bp
-app.register_blueprint(models_bp, url_prefix='/api/models')
-if not READ_ONLY:
-    app.register_blueprint(models_write_bp, url_prefix='/api/models')
 
 # ===========================================================
 # URL Resolution for t.co links (Twitter/X media embedding)
@@ -243,9 +223,6 @@ def indexed():
     indices = data.get('indices', [])
     columns = data.get('columns')
     embedding_id = data.get('embedding_id')
-    sae_id = data.get('sae_id')
-
-    print("SAE ID", sae_id)
 
     if dataset not in DATAFRAMES:
         df = pd.read_parquet(os.path.join(DATA_DIR, dataset, "input.parquet"))
@@ -303,24 +280,6 @@ def indexed():
             sorted_embeddings = np.array(f["embeddings"][npvi[sorted_indices]])
             filtered_embeddings = sorted_embeddings[np.argsort(sorted_indices)]
         rows['ls_embedding'] = filtered_embeddings
-    
-    if sae_id:
-        sae_path = os.path.join(DATA_DIR, dataset, "saes", f"{sae_id}.h5")
-        print("sae_path", sae_path)
-        with h5py.File(sae_path, 'r') as f:
-            npvi = np.array(valid_indices)
-            sorted_indices = np.argsort(npvi)
-            sorted_acts = np.array(f["top_acts"][npvi[sorted_indices]])
-            filtered_acts = sorted_acts[np.argsort(sorted_indices)]
-            sorted_top_inds = np.array(f["top_indices"][npvi[sorted_indices]])
-            filtered_top_inds = sorted_top_inds[np.argsort(sorted_indices)]
-        # rows['ls_acts'] = filtered_acts
-        # rows['ls_top_indices'] = filtered_top_inds
-        # rows['ls_features'] = [
-        #     {'top_acts': act, 'top_indices': idx} for act, idx in zip(filtered_acts, filtered_top_inds)
-        # ]
-        rows['sae_acts'] = filtered_acts.tolist()
-        rows['sae_indices'] = filtered_top_inds.tolist()
 
     # send back the rows as json
     return rows.to_json(orient="records")
@@ -369,7 +328,6 @@ def query():
     indices = data['indices'] if 'indices' in data else []
     columns = data.get('columns') if 'columns' in data else None
     embedding_id = data['embedding_id'] if 'embedding_id' in data else None
-    sae_id = data.get('sae_id') if 'sae_id' in data else None
 
     # filters = data['filters'] if 'filters' in data else None
     sort = data['sort'] if 'sort' in data else None
@@ -407,22 +365,6 @@ def query():
             filtered_embeddings = sorted_embeddings[np.argsort(sorted_indices)]
         # Add the filtered embeddings as a new column to the rows DataFrame
         rows['ls_embedding'] = filtered_embeddings.tolist()
-    
-    if sae_id:
-        sae_path = os.path.join(DATA_DIR, dataset, "saes", f"{sae_id}.h5")
-        print("sae_path", sae_path)
-        with h5py.File(sae_path, 'r') as f:
-            npvi = np.array(rows.index)
-            sorted_indices = np.argsort(npvi)
-            sorted_acts = np.array(f["top_acts"][npvi[sorted_indices]])
-            filtered_acts = sorted_acts[np.argsort(sorted_indices)]
-            sorted_top_inds = np.array(f["top_indices"][npvi[sorted_indices]])
-            filtered_top_inds = sorted_top_inds[np.argsort(sorted_indices)]
-        # rows['ls_acts'] = filtered_acts
-        # rows['ls_top_indices'] = filtered_top_inds
-        rows['ls_features'] = [
-            {'top_acts': act, 'top_indices': idx} for act, idx in zip(filtered_acts, filtered_top_inds)
-        ]
 
     # print("ROWS", rows.head())
     # apply sort
@@ -444,27 +386,6 @@ def query():
         "total": len(rows),
         "totalPages": math.ceil(len(rows) / per_page)
     })
-
-if APP_MODE == "studio" and not READ_ONLY:
-    @app.route('/api/settings', methods=['POST'])
-    def update_settings():
-        data = request.get_json()
-        print("update settings", data)
-        for key in data:
-            set_key(".env", key, data[key])
-        return jsonify({})
-
-    @app.route('/api/settings', methods=['GET'])
-    def get_settings():
-        config = dotenv_values(".env")  # Assuming the .env file is in the root directory
-        supported_api_keys = get_supported_api_keys()
-        settings = {
-            "data_dir": config["LATENT_SCOPE_DATA"],
-            "api_keys": [key for key in config if key in supported_api_keys],
-            "supported_api_keys": supported_api_keys,
-            "env_file": os.path.abspath(".env")
-        }
-        return jsonify(settings)
 
 @app.route('/api/version', methods=['GET'])
 def get_version():

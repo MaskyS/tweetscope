@@ -5,14 +5,11 @@ import {
   useEffect,
   useCallback,
   useMemo,
-  type Dispatch,
   type ReactNode,
-  type SetStateAction,
 } from 'react';
 import { useParams } from 'react-router-dom';
 
 import { apiUrl, catalogClient, viewClient, apiService } from '../lib/apiService';
-import { saeAvailable } from '../lib/SAE';
 import type { ClusterLabel, JsonRecord, ScopeData, ScopeRow } from '../api/types';
 
 type DatasetMeta = ScopeData['dataset'];
@@ -37,15 +34,12 @@ interface ScopeContextValue {
   scopeId?: string;
   dataset: DatasetMeta | null;
   scope: ScopeData | null;
-  sae: JsonRecord | null;
   scopeLoaded: boolean;
   clusterMap: Record<number, ClusterMapEntry>;
   clusterLabels: ClusterLabel[];
   clusterHierarchy: ClusterHierarchy | null;
   scopeRows: ScopeRow[];
   deletedIndices: number[];
-  features: JsonRecord[];
-  setFeatures: Dispatch<SetStateAction<JsonRecord[]>>;
   scopes: ScopeData[];
   embeddings: JsonRecord[];
   tags: string[];
@@ -80,7 +74,6 @@ export function ScopeProvider({ children }: { children: ReactNode }) {
 
   const [scope, setScope] = useState<ScopeData | null>(null);
   const [dataset, setDataset] = useState<DatasetMeta | null>(null);
-  const [sae, setSae] = useState<JsonRecord | null>(null);
 
   const [scopeLoaded, setScopeLoaded] = useState(false);
   const [scopeRows, setScopeRows] = useState<ScopeRow[]>([]);
@@ -89,7 +82,6 @@ export function ScopeProvider({ children }: { children: ReactNode }) {
     if (!datasetId || !scopeId) {
       setScope(null);
       setDataset(null);
-      setSae(null);
       setScopeLoaded(false);
       return;
     }
@@ -101,16 +93,6 @@ export function ScopeProvider({ children }: { children: ReactNode }) {
       if (cancelled) return;
       setScope(nextScope);
       setDataset(nextScope.dataset);
-
-      const embeddingModelId = nextScope.embedding?.model_id;
-      const hasSaeSupport =
-        typeof embeddingModelId === 'string' &&
-        Object.prototype.hasOwnProperty.call(saeAvailable, embeddingModelId);
-      if (hasSaeSupport) {
-        setSae((nextScope.sae as JsonRecord | null) ?? null);
-      } else {
-        setSae(null);
-      }
 
       console.log('=== Scope ===', nextScope);
     });
@@ -163,42 +145,6 @@ export function ScopeProvider({ children }: { children: ReactNode }) {
   const tags = useMemo(() => {
     return Object.keys(tagset);
   }, [tagset]);
-
-  const [features, setFeatures] = useState<JsonRecord[]>([]);
-  useEffect(() => {
-    if (!datasetId || !sae || !scope || embeddings.length === 0) return;
-
-    const embedding = embeddings.find(
-      (entry) => String(entry.id ?? '') === String(scope.embedding_id ?? '')
-    );
-    const modelId =
-      embedding && typeof embedding.model_id === 'string'
-        ? embedding.model_id
-        : undefined;
-
-    const saeConfig =
-      modelId && Object.prototype.hasOwnProperty.call(saeAvailable, modelId)
-        ? (saeAvailable as Record<string, { url: string }>)[modelId]
-        : undefined;
-
-    const saeId = typeof sae.id === 'string' ? sae.id : String(sae.id ?? '');
-    if (!saeConfig?.url || !saeId) return;
-
-    apiService.getFeatures(saeConfig.url).then((ftsRaw: unknown) => {
-      const fts = (Array.isArray(ftsRaw) ? ftsRaw : []) as JsonRecord[];
-      apiService.getDatasetFeatures(datasetId, saeId).then((dsfts: JsonRecord[]) => {
-        dsfts.forEach((ft, i) => {
-          const target = fts[i] as Record<string, unknown> | undefined;
-          if (!target) return;
-          target.dataset_max = ft.max_activation;
-          target.dataset_avg = ft.avg_activation;
-          target.dataset_count = ft.count;
-        });
-        console.log('DATASET included FEATURES', fts);
-        setFeatures(fts);
-      });
-    });
-  }, [scope, sae, embeddings, datasetId]);
 
   useEffect(() => {
     if (!scope?.id || !datasetId) {
@@ -370,15 +316,12 @@ export function ScopeProvider({ children }: { children: ReactNode }) {
       scopeId,
       dataset,
       scope,
-      sae,
       scopeLoaded,
       clusterMap,
       clusterLabels,
       clusterHierarchy,
       scopeRows,
       deletedIndices,
-      features,
-      setFeatures,
       scopes,
       embeddings,
       tags,
@@ -389,15 +332,12 @@ export function ScopeProvider({ children }: { children: ReactNode }) {
       scopeId,
       dataset,
       scope,
-      sae,
       scopeLoaded,
       clusterMap,
       clusterLabels,
       clusterHierarchy,
       scopeRows,
       deletedIndices,
-      features,
-      setFeatures,
       scopes,
       embeddings,
       tags,
