@@ -16,11 +16,56 @@ import {
 
 export const viewsRoutes = new Hono();
 
+const contractRequired = Object.keys(scopeContract.required_columns);
+const contractOptional = Object.keys(scopeContract.optional_columns ?? {});
+const contractSelected = [...new Set([...contractRequired, ...contractOptional])];
+
+class ContractViolationError extends Error {
+  violation: NonNullable<ReturnType<typeof validateRequiredColumns>>;
+  constructor(violation: NonNullable<ReturnType<typeof validateRequiredColumns>>) {
+    super("Scope contract violation");
+    this.violation = violation;
+  }
+}
+
 async function resolveViewTableId(dataset: string, view: string): Promise<string> {
   const meta = await getScopeMeta(dataset, view);
   const tableId = meta.lancedb_table_id;
   const tableIdOrSuffix = typeof tableId === "string" && tableId ? tableId : view;
   return resolveDatasetTableId(dataset, tableIdOrSuffix);
+}
+
+async function queryServingRows({
+  dataset,
+  viewOrScope,
+  tableId,
+}: {
+  dataset: string;
+  viewOrScope: string;
+  tableId: string;
+}): Promise<JsonRecord[]> {
+  const table = await getDatasetTable(dataset, tableId);
+  const tableCols = await getTableColumns(tableId);
+
+  // Select only serving columns that exist in the table (exclude vector)
+  const queryCols = contractSelected.filter((col) => tableCols.includes(col) && col !== "vector");
+
+  const rawRows = (await table.query().select(queryCols).toArray()) as JsonRecord[];
+  const normalized = rawRows.map((row, idx) => {
+    const safe = jsonSafe(row) as JsonRecord;
+    const lsIndex = normalizeIndex(safe.ls_index) ?? idx;
+    return { ...safe, ls_index: lsIndex };
+  });
+
+  const violation = validateRequiredColumns(normalized, dataset, viewOrScope);
+  if (violation) {
+    console.error(
+      `Schema contract violation for ${dataset}/${viewOrScope}: missing [${violation.missing_columns.join(", ")}]`,
+    );
+    throw new ContractViolationError(violation);
+  }
+
+  return normalized;
 }
 
 viewsRoutes.get("/datasets/:dataset/views/:view/meta", async (c) => {
@@ -80,41 +125,15 @@ viewsRoutes.get("/datasets/:dataset/views/:view/points", async (c) => {
 viewsRoutes.get("/datasets/:dataset/views/:view/rows", async (c) => {
   const { dataset, view } = c.req.param();
 
-  // Derive columns from contract
-  const contractRequired = Object.keys(scopeContract.required_columns);
-  const optionalColumns = Object.keys(scopeContract.optional_columns ?? {});
-  const selected = [...new Set([...contractRequired, ...optionalColumns])];
-
   try {
     const tableId = await resolveViewTableId(dataset, view);
-    const table = await getDatasetTable(dataset, tableId);
-    const tableCols = await getTableColumns(tableId);
-
-    // Select only serving columns that exist in the table (exclude vector)
-    const queryCols = selected.filter((col) => tableCols.includes(col) && col !== "vector");
-
-    const rawRows = (await table
-      .query()
-      .select(queryCols)
-      .toArray()) as JsonRecord[];
-
-    const normalized = rawRows.map((row, idx) => {
-      const safe = jsonSafe(row) as JsonRecord;
-      const lsIndex = normalizeIndex(safe.ls_index) ?? idx;
-      return { ...safe, ls_index: lsIndex };
-    });
-
-    const violation = validateRequiredColumns(normalized, dataset, view);
-    if (violation) {
-      console.error(
-        `Schema contract violation for ${dataset}/${view}: missing [${violation.missing_columns.join(", ")}]`,
-      );
-      return c.json(violation, 500);
-    }
-
-    return c.json(normalized);
+    const rows = await queryServingRows({ dataset, viewOrScope: view, tableId });
+    return c.json(rows);
   } catch (err) {
     console.error(err);
+    if (err instanceof ContractViolationError) {
+      return c.json(err.violation, 500);
+    }
     return c.json(
       { error: "view_table_not_found", dataset, view },
       404
@@ -124,63 +143,31 @@ viewsRoutes.get("/datasets/:dataset/views/:view/rows", async (c) => {
 
 viewsRoutes.get("/datasets/:dataset/scopes/:scope/parquet", async (c) => {
   const { dataset, scope } = c.req.param();
-
-  // Derive columns from contract
-  const contractRequired = Object.keys(scopeContract.required_columns);
-  const optionalColumns = Object.keys(scopeContract.optional_columns ?? {});
-  const selected = [...new Set([...contractRequired, ...optionalColumns])];
-
-  // Try LanceDB first
+  let tableId: string;
   try {
-    const tableId = await resolveLanceTableId(dataset, scope);
-    const table = await getDatasetTable(dataset, tableId);
-    const tableCols = await getTableColumns(tableId);
+    tableId = await resolveLanceTableId(dataset, scope);
+  } catch (err) {
+    console.error(err);
+    return c.json({ error: "scope_not_found", dataset, scope }, 404);
+  }
 
-    // Select only serving columns that exist in the table (exclude vector)
-    const queryCols = selected.filter((col) => tableCols.includes(col) && col !== "vector");
-
-    const rawRows = (await table
-      .query()
-      .select(queryCols)
-      .toArray()) as JsonRecord[];
-
-    const normalized = rawRows.map((row, idx) => {
-      const safe = jsonSafe(row) as JsonRecord;
-      const lsIndex = normalizeIndex(safe.ls_index) ?? idx;
-      return { ...safe, ls_index: lsIndex };
-    });
-
-    const violation = validateRequiredColumns(normalized, dataset, scope);
-    if (violation) {
-      console.error(
-        `Schema contract violation for ${dataset}/${scope}: missing [${violation.missing_columns.join(", ")}]`,
-      );
-      return c.json(violation, 500);
+  try {
+    const rows = await queryServingRows({ dataset, viewOrScope: scope, tableId });
+    return c.json(rows);
+  } catch (err) {
+    console.error(err);
+    if (err instanceof ContractViolationError) {
+      return c.json(err.violation, 500);
     }
-
-    return c.json(normalized);
-  } catch {
-    // Fallback: parquet file
-    try {
-      const rows = await loadParquetRows(`${dataset}/scopes/${scope}-input.parquet`, selected);
-
-      const normalized = rows.map((row, idx) => {
-        const lsIndex = normalizeIndex(row.ls_index) ?? idx;
-        return { ...row, ls_index: lsIndex };
-      });
-
-      const violation = validateRequiredColumns(normalized, dataset, scope);
-      if (violation) {
-        console.error(
-          `Schema contract violation for ${dataset}/${scope}: missing [${violation.missing_columns.join(", ")}]`,
-        );
-        return c.json(violation, 500);
-      }
-
-      return c.json(normalized);
-    } catch {
-      return c.json({ error: "Scope parquet not found" }, 404);
-    }
+    return c.json(
+      {
+        error: "scope_table_not_found",
+        dataset,
+        scope,
+        hint: "Run export_lance for this scope to backfill the LanceDB table before serving.",
+      },
+      404,
+    );
   }
 });
 
