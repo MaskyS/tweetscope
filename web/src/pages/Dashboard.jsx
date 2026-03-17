@@ -1,10 +1,11 @@
-import { useState, useMemo, useCallback } from 'react';
+import { useMemo, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery, useQueries } from '@tanstack/react-query';
 import PropTypes from 'prop-types';
 import { apiUrl, catalogClient } from '../lib/apiService';
 import { queryKeys } from '../query/keys';
 import ScopeThumbnail from '../components/ScopeThumbnail';
+import ProfileAvatar from '../components/ProfileAvatar';
 
 import styles from './Dashboard.module.scss';
 
@@ -190,11 +191,7 @@ function CollectionCard({ collection }) {
   const profile = tweetsDataset.profile || likesDataset?.profile;
   const displayName = profile?.username || profile?.display_name || id;
   const username = profile?.username;
-  const avatarUrl = profile?.avatar_url;
   const bio = profile?.bio;
-
-  const [avatarError, setAvatarError] = useState(false);
-  const onAvatarError = useCallback(() => setAvatarError(true), []);
 
   const initial = displayName.charAt(0).toUpperCase();
 
@@ -216,18 +213,13 @@ function CollectionCard({ collection }) {
         <Link to={primaryHref} className={styles.cardLink} aria-label={`Explore ${displayName}`} />
       )}
       <div className={styles.collectionHeader}>
-        {avatarUrl && !avatarError ? (
-          <img
-            src={avatarUrl}
-            alt={displayName}
-            className={styles.avatar}
-            loading="lazy"
-            decoding="async"
-            onError={onAvatarError}
-          />
-        ) : (
-          <div className={styles.avatarFallback}>{initial}</div>
-        )}
+        <ProfileAvatar
+          profile={profile}
+          alt={displayName}
+          className={styles.avatar}
+          fallbackClassName={styles.avatarFallback}
+          fallbackText={initial}
+        />
         <div className={styles.collectionMeta}>
           <h3 className={styles.collectionName}>
             {displayName}

@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom';
 import { ArrowLeft, ChevronDown, House } from 'lucide-react';
 import PropTypes from 'prop-types';
+import ProfileAvatar from './ProfileAvatar';
 import styles from './SubNav.module.css';
 
 function deriveCollectionLabel(dataset) {
@@ -42,8 +43,8 @@ const SubNav = ({ dataset, scope, scopes, onScopeChange, onBack, overlay = false
   }
 
   const hasMultipleScopes = Array.isArray(scopes) && scopes.length > 1;
-  const avatarUrl = dataset?.profile?.avatar_url;
   const label = deriveCollectionLabel(dataset);
+  const fallbackText = label.charAt(0).toUpperCase();
 
   return (
     <div className={subHeaderClassName}>
@@ -58,9 +59,13 @@ const SubNav = ({ dataset, scope, scopes, onScopeChange, onBack, overlay = false
           </Link>
         )}
         <div className={styles.profilePill} title={label}>
-          {avatarUrl && (
-            <img src={avatarUrl} alt="" className={styles.avatar} />
-          )}
+          <ProfileAvatar
+            profile={dataset?.profile}
+            alt=""
+            className={styles.avatar}
+            fallbackClassName={styles.avatarFallback}
+            fallbackText={fallbackText}
+          />
           <span className={styles.profileLabel}>{label}</span>
         </div>
 

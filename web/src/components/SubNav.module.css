@@ -63,7 +63,28 @@
   transition: opacity var(--transition-normal);
 }
 
+.avatarFallback {
+  width: 22px;
+  height: 22px;
+  border-radius: var(--radius-full);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--neutrals-color-neutral-1);
+  color: var(--text-color-text-subtle);
+  font-family: 'Instrument Sans', system-ui, sans-serif;
+  font-size: 0.68rem;
+  font-weight: 700;
+  opacity: 0.6;
+  transition: opacity var(--transition-normal);
+}
+
 .contextBar:hover .avatar {
+  opacity: 1;
+}
+
+.contextBar:hover .avatarFallback {
   opacity: 1;
 }
 
