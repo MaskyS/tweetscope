@@ -1,19 +1,39 @@
-import { useState, useRef, useCallback, useEffect, useLayoutEffect, useMemo, memo } from 'react';
+import {
+  startTransition,
+  useState,
+  useRef,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  memo,
+} from 'react';
 import PropTypes from 'prop-types';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import { ChevronRight } from 'lucide-react';
 import TopicListSidebar from './TopicListSidebar';
 import FeedColumn from './FeedColumn';
 import ThreadOverlay from './ThreadOverlay';
 import { recordFeedCarouselDebug } from '../../../../lib/feedCarouselDebug';
 import { DEFAULT_SORT_DIRECTIONS, sortClusters } from '../../../../lib/sortClusters';
+import {
+  FEED_CAROUSEL_COLUMN_WIDTH,
+  FEED_CAROUSEL_GAP,
+  FEED_CAROUSEL_LIST_WIDTH,
+  getClosestSortedIndex,
+  getPrefetchOriginalIndices,
+  getSnapTargetForScrollLeft,
+  getScrollTargetForColumn,
+  getSpacerWidth,
+  getTrackOffset,
+} from './feedCarouselVirtualization';
 import styles from './FeedCarousel.module.scss';
 
-const COLUMN_WIDTH = 550;
-const GAP = 32;
-const LIST_WIDTH = 360;
-const VISIBLE_COLUMN_RADIUS = 3;
 const PROGRAMMATIC_SCROLL_TOLERANCE = 8;
-const DEFAULT_VIEWPORT_WIDTH = typeof window === 'undefined' ? COLUMN_WIDTH : window.innerWidth;
+const MANUAL_SCROLL_IDLE_DELAY = 180;
+const DEFAULT_VIEWPORT_WIDTH =
+  typeof window === 'undefined' ? FEED_CAROUSEL_COLUMN_WIDTH : window.innerWidth;
+const VIRTUALIZER_OVERSCAN = 2;
 
 const EMPTY_TWEETS = [];
 
@@ -29,8 +49,6 @@ function FeedCarousel({
   clusterMap,
   focusedClusterIndex,
   onFocusedIndexChange,
-  onHover,
-  onClick,
   nodeStats,
   onViewQuotes,
   subNavProps,
@@ -38,7 +56,6 @@ function FeedCarousel({
   const containerRef = useRef(null);
   const tocContainerRef = useRef(null);
   const scrollRafRef = useRef(null);
-  const pendingColumnScrollRef = useRef(null);
   const lastToCPointerRef = useRef({ x: null, y: null });
   const latestScrollLeftRef = useRef(0);
   const [carouselGeometry, setCarouselGeometry] = useState({
@@ -54,6 +71,9 @@ function FeedCarousel({
   const [sortDirection, setSortDirection] = useState(DEFAULT_SORT_DIRECTIONS.popular);
   const [visualSortedIndex, setVisualSortedIndex] = useState(0);
   const hasInitialScrollSyncRef = useRef(false);
+  const isListScrolledOffRef = useRef(false);
+  const isToCRevealedRef = useRef(false);
+  const manualSnapPendingRef = useRef(false);
 
   // ── Sticky ToC state ──
   const isHoveringStickyToCRef = useRef(false);
@@ -69,6 +89,34 @@ function FeedCarousel({
   // can perturb browser scroll/focus behavior and jerk the carousel sideways.
   const isToCStickyShell = isListScrolledOff;
   const isToCStickyVisible = isListScrolledOff && (isToCRevealed || isPinnedAfterToCAction);
+
+  const setIsListScrolledOffIfChanged = useCallback((nextValue) => {
+    const normalized = Boolean(nextValue);
+    if (isListScrolledOffRef.current === normalized) return;
+    isListScrolledOffRef.current = normalized;
+    setIsListScrolledOff(normalized);
+  }, []);
+
+  const setIsToCRevealedIfChanged = useCallback((nextValue) => {
+    const normalized = Boolean(nextValue);
+    if (isToCRevealedRef.current === normalized) return;
+    isToCRevealedRef.current = normalized;
+    setIsToCRevealed(normalized);
+  }, []);
+
+  const setVisualSortedIndexIfChanged = useCallback((nextValue, { defer = false } = {}) => {
+    const normalized = Number.isFinite(nextValue) ? Math.max(0, Math.trunc(nextValue)) : 0;
+    const commit = () => {
+      setVisualSortedIndex((current) => (current === normalized ? current : normalized));
+    };
+
+    if (defer) {
+      startTransition(commit);
+      return;
+    }
+
+    commit();
+  }, []);
 
   const clearLastToCPointer = useCallback(() => {
     lastToCPointerRef.current = { x: null, y: null };
@@ -95,8 +143,8 @@ function FeedCarousel({
   }, []);
 
   const revealToC = useCallback(() => {
-    setIsToCRevealed(true);
-  }, []);
+    setIsToCRevealedIfChanged(true);
+  }, [setIsToCRevealedIfChanged]);
 
   const clearToCReveal = useCallback(() => {
     if (tocContainerRef.current?.contains(document.activeElement)) {
@@ -111,22 +159,22 @@ function FeedCarousel({
     isHoveringStickyToCRef.current = false;
     isPinnedAfterToCActionRef.current = false;
     setIsPinnedAfterToCAction(false);
-    setIsToCRevealed(false);
-  }, [clearLastToCPointer]);
+    setIsToCRevealedIfChanged(false);
+  }, [clearLastToCPointer, setIsToCRevealedIfChanged]);
 
   const pinToCAfterAction = useCallback(() => {
     shouldHideToCAfterProgrammaticScrollRef.current = false;
     isPinnedAfterToCActionRef.current = true;
     setIsPinnedAfterToCAction(true);
-    setIsToCRevealed(true);
-  }, []);
+    setIsToCRevealedIfChanged(true);
+  }, [setIsToCRevealedIfChanged]);
 
   const handleToCMouseEnter = useCallback((event) => {
     updateLastToCPointer(event);
     if (!latestScrollLeftRef.current || latestScrollLeftRef.current <= 50) return;
     isHoveringStickyToCRef.current = true;
-    setIsToCRevealed(true);
-  }, [updateLastToCPointer]);
+    setIsToCRevealedIfChanged(true);
+  }, [setIsToCRevealedIfChanged, updateLastToCPointer]);
 
   const handleToCMouseMove = useCallback((event) => {
     updateLastToCPointer(event);
@@ -134,7 +182,7 @@ function FeedCarousel({
     isHoveringStickyToCRef.current = true;
   }, [updateLastToCPointer]);
 
-  const handleToCMouseLeave = useCallback((event) => {
+  const handleToCMouseLeave = useCallback(() => {
     if (!latestScrollLeftRef.current || latestScrollLeftRef.current <= 50) return;
     if (isProgrammaticScrollRef.current) {
       // Keep the sticky ToC mounted until the click-driven horizontal scroll
@@ -192,14 +240,14 @@ function FeedCarousel({
 
     if (hoveredStickyToC) {
       isHoveringStickyToCRef.current = true;
-      setIsToCRevealed(true);
+      setIsToCRevealedIfChanged(true);
       return;
     }
 
     if (!hoveredStickyToC) {
       clearToCReveal();
     }
-  }, [clearToCReveal, isPointerWithinStickyToC]);
+  }, [clearToCReveal, isPointerWithinStickyToC, setIsToCRevealedIfChanged]);
 
   const beginProgrammaticScroll = useCallback((reason = 'unknown', targetLeft = null) => {
     isProgrammaticScrollRef.current = true;
@@ -218,6 +266,7 @@ function FeedCarousel({
       scrollLeft: latestScrollLeftRef.current,
       focusedOriginal: focusedIndexRef.current,
     });
+    manualSnapPendingRef.current = false;
 
     if (programmaticScrollTimerRef.current) {
       clearTimeout(programmaticScrollTimerRef.current);
@@ -254,20 +303,16 @@ function FeedCarousel({
   const sortToOriginalRef = useRef(sortToOriginal);
   sortToOriginalRef.current = sortToOriginal;
 
-  const visibleWindowRangeRef = useRef({ start: 0, end: 0 });
-
   useEffect(() => {
     if (!sortedClusters.length) {
-      setVisualSortedIndex(0);
+      setVisualSortedIndexIfChanged(0);
       return;
     }
 
     if (!isProgrammaticScrollRef.current) {
-      setVisualSortedIndex((current) => (
-        current === sortedFocusedIndex ? current : sortedFocusedIndex
-      ));
+      setVisualSortedIndexIfChanged(sortedFocusedIndex);
     }
-  }, [sortedClusters.length, sortedFocusedIndex]);
+  }, [setVisualSortedIndexIfChanged, sortedClusters.length, sortedFocusedIndex]);
 
   const getClusterDebugMeta = useCallback(
     (originalIdx, sortedIdx = originalToSort[originalIdx]) => {
@@ -294,6 +339,13 @@ function FeedCarousel({
         scrollLeft: latestScrollLeftRef.current,
         ...extra,
       });
+      if (source === 'scroll-center') {
+        startTransition(() => {
+          onFocusedIndexChange(originalIdx);
+        });
+        return;
+      }
+
       onFocusedIndexChange(originalIdx);
     },
     [getClusterDebugMeta, onFocusedIndexChange]
@@ -319,10 +371,86 @@ function FeedCarousel({
   }, []);
 
   const spacerWidth = useMemo(() => {
-    const targetStart = (carouselGeometry.viewportWidth - COLUMN_WIDTH) / 2;
-    const currentStart = carouselGeometry.paddingLeft + LIST_WIDTH + GAP;
-    return Math.max(0, targetStart - currentStart);
-  }, [carouselGeometry.paddingLeft, carouselGeometry.viewportWidth]);
+    return getSpacerWidth(carouselGeometry);
+  }, [carouselGeometry]);
+
+  const trackOffset = useMemo(() => getTrackOffset(carouselGeometry), [carouselGeometry]);
+
+  const settleScrollToNearestColumn = useCallback(
+    (reason = 'manual-scroll-idle') => {
+      const container = containerRef.current;
+      if (!container || !sortedClusters.length || isProgrammaticScrollRef.current) {
+        manualSnapPendingRef.current = false;
+        return;
+      }
+
+      manualSnapPendingRef.current = false;
+
+      const currentLeft = container.scrollLeft;
+      const { sortedIndex, scrollLeft: targetLeft } = getSnapTargetForScrollLeft(
+        currentLeft,
+        carouselGeometry,
+        sortedClusters.length
+      );
+
+      setVisualSortedIndexIfChanged(sortedIndex);
+
+      if (Math.abs(currentLeft - targetLeft) <= PROGRAMMATIC_SCROLL_TOLERANCE) {
+        return;
+      }
+
+      const originalIdx = sortToOriginalRef.current[sortedIndex];
+      recordFeedCarouselDebug('manual-snap', {
+        reason,
+        currentLeft,
+        targetLeft,
+        ...getClusterDebugMeta(originalIdx, sortedIndex),
+      });
+
+      if (originalIdx !== undefined && originalIdx !== focusedIndexRef.current) {
+        emitFocusedIndexChange(reason, originalIdx, {
+          currentLeft,
+          targetLeft,
+          sortedIndex,
+        });
+      }
+
+      beginProgrammaticScroll(reason, targetLeft);
+      latestScrollLeftRef.current = targetLeft;
+      setIsListScrolledOffIfChanged(targetLeft > 50);
+      container.scrollTo({
+        left: targetLeft,
+        behavior: 'smooth',
+      });
+    },
+    [
+      beginProgrammaticScroll,
+      carouselGeometry,
+      emitFocusedIndexChange,
+      getClusterDebugMeta,
+      setIsListScrolledOffIfChanged,
+      setVisualSortedIndexIfChanged,
+      sortedClusters.length,
+    ]
+  );
+
+  const columnVirtualizer = useVirtualizer({
+    count: sortedClusters.length,
+    horizontal: true,
+    getScrollElement: () => containerRef.current,
+    estimateSize: () => FEED_CAROUSEL_COLUMN_WIDTH,
+    gap: FEED_CAROUSEL_GAP,
+    overscan: VIRTUALIZER_OVERSCAN,
+    getItemKey: (index) => sortedClusters[index]?.cluster ?? index,
+    scrollMargin: trackOffset,
+    isScrollingResetDelay: MANUAL_SCROLL_IDLE_DELAY,
+    onChange: (_, sync) => {
+      if (sync || isProgrammaticScrollRef.current || !manualSnapPendingRef.current) return;
+      settleScrollToNearestColumn();
+    },
+  });
+
+  const virtualItems = columnVirtualizer.getVirtualItems();
 
   useLayoutEffect(() => {
     measureCarouselGeometry();
@@ -353,7 +481,7 @@ function FeedCarousel({
         window.cancelAnimationFrame(scrollRafRef.current);
         scrollRafRef.current = null;
       }
-      pendingColumnScrollRef.current = null;
+      manualSnapPendingRef.current = false;
       if (programmaticScrollTimerRef.current) {
         clearTimeout(programmaticScrollTimerRef.current);
       }
@@ -380,14 +508,18 @@ function FeedCarousel({
       // and can force the browser to re-snap to the start.
       if (isProgrammaticScrollRef.current) return;
       if (isHoveringStickyToCRef.current || isPinnedAfterToCActionRef.current) return;
-      if (event.clientX > LIST_WIDTH || event.clientY < 0 || event.clientY > viewportHeight) {
-        setIsToCRevealed(false);
+      if (
+        event.clientX > FEED_CAROUSEL_LIST_WIDTH ||
+        event.clientY < 0 ||
+        event.clientY > viewportHeight
+      ) {
+        setIsToCRevealedIfChanged(false);
       }
     };
 
     window.addEventListener('pointermove', handlePointerMove);
     return () => window.removeEventListener('pointermove', handlePointerMove);
-  }, [isToCRevealed]);
+  }, [isToCRevealed, setIsToCRevealedIfChanged]);
 
   // scrollend listener — clears programmatic flag (supersedes fallback timeout)
   useEffect(() => {
@@ -410,22 +542,6 @@ function FeedCarousel({
     }
   }, [normalizedFocusedIndex, clampedFocusedIndex, emitFocusedIndexChange, topLevelClusters.length]);
 
-  // getClosestIndex returns SORTED index (visual column position)
-  const getClosestIndex = useCallback(
-    (scrollLeft) => {
-      if (!sortedClusters.length) return 0;
-
-      const viewportCenter = carouselGeometry.viewportWidth / 2;
-      const contentBefore = carouselGeometry.paddingLeft + LIST_WIDTH + GAP + spacerWidth;
-      const effectiveWidth = COLUMN_WIDTH + GAP;
-      const targetCenter = scrollLeft + viewportCenter - contentBefore - COLUMN_WIDTH / 2;
-      const index = Math.round(targetCenter / effectiveWidth);
-
-      return Math.max(0, Math.min(index, sortedClusters.length - 1));
-    },
-    [carouselGeometry.paddingLeft, carouselGeometry.viewportWidth, spacerWidth, sortedClusters.length]
-  );
-
   const handleScroll = useCallback(() => {
     if (!containerRef.current) return;
     latestScrollLeftRef.current = containerRef.current.scrollLeft;
@@ -435,12 +551,14 @@ function FeedCarousel({
       scrollRafRef.current = null;
       const scrollLeft = latestScrollLeftRef.current;
       const nextIsScrolledOff = scrollLeft > 50;
-      setIsListScrolledOff(nextIsScrolledOff);
+      setIsListScrolledOffIfChanged(nextIsScrolledOff);
 
-      const closestSortedIndex = getClosestIndex(scrollLeft);
-      setVisualSortedIndex((current) => (
-        current === closestSortedIndex ? current : closestSortedIndex
-      ));
+      const closestSortedIndex = getClosestSortedIndex(
+        scrollLeft,
+        carouselGeometry,
+        sortedClusters.length
+      );
+      setVisualSortedIndexIfChanged(closestSortedIndex, { defer: true });
 
       if (
         !isProgrammaticScrollRef.current &&
@@ -448,7 +566,7 @@ function FeedCarousel({
         !isPinnedAfterToCActionRef.current &&
         nextIsScrolledOff
       ) {
-        setIsToCRevealed(false);
+        setIsToCRevealedIfChanged(false);
       }
 
       // Don't let the scroll listener rewrite focus while an entry/sort/click
@@ -465,6 +583,8 @@ function FeedCarousel({
         return;
       }
 
+      manualSnapPendingRef.current = true;
+
       const closestOriginalIndex = sortToOriginalRef.current[closestSortedIndex];
 
       // Convert sorted index → original index for parent
@@ -475,20 +595,29 @@ function FeedCarousel({
         });
       }
     });
-  }, [emitFocusedIndexChange, endProgrammaticScroll, getClosestIndex]);
+  }, [
+    carouselGeometry,
+    emitFocusedIndexChange,
+    endProgrammaticScroll,
+    setIsListScrolledOffIfChanged,
+    setIsToCRevealedIfChanged,
+    setVisualSortedIndexIfChanged,
+    sortedClusters.length,
+  ]);
 
-  const getScrollTargetForColumn = useCallback(
-    (sortedIndex) => {
-      if (sortedIndex <= 0) {
-        return 0;
-      }
-      const contentBefore = carouselGeometry.paddingLeft + LIST_WIDTH + GAP + spacerWidth;
-      const effectiveWidth = COLUMN_WIDTH + GAP;
-      const columnStart = contentBefore + sortedIndex * effectiveWidth;
-      return Math.max(0, columnStart - (carouselGeometry.viewportWidth - COLUMN_WIDTH) / 2);
-    },
-    [carouselGeometry.paddingLeft, carouselGeometry.viewportWidth, spacerWidth]
-  );
+  const correctStartPositionIfNeeded = useCallback(() => {
+    const container = containerRef.current;
+    if (!container) return true;
+    if (Math.abs(container.scrollLeft) <= PROGRAMMATIC_SCROLL_TOLERANCE) return true;
+
+    latestScrollLeftRef.current = 0;
+    setIsListScrolledOffIfChanged(false);
+    container.scrollTo({
+      left: 0,
+      behavior: 'auto',
+    });
+    return false;
+  }, [setIsListScrolledOffIfChanged]);
 
   const scrollToStart = useCallback(
     ({ behavior = 'auto', reason = 'unknown' } = {}) => {
@@ -501,36 +630,39 @@ function FeedCarousel({
       });
       beginProgrammaticScroll(reason, 0);
 
+      setVisualSortedIndexIfChanged(0);
       latestScrollLeftRef.current = 0;
-      setIsListScrolledOff(false);
+      setIsListScrolledOffIfChanged(false);
       containerRef.current.scrollTo({
         left: 0,
         behavior,
       });
 
       // Some browsers re-anchor the newly mounted overflow container after the
-      // expanded layout settles. Re-apply the start position on the next paint
-      // so the entry state reliably shows the ToC and first column.
+      // expanded layout settles. Only re-apply the start position if the first
+      // scroll write did not stick, otherwise we add extra work to the return
+      // path for no user-facing gain.
       requestAnimationFrame(() => {
+        if (correctStartPositionIfNeeded()) return;
+
         requestAnimationFrame(() => {
-          if (!containerRef.current) return;
-          latestScrollLeftRef.current = 0;
-          setIsListScrolledOff(false);
-          containerRef.current.scrollTo({
-            left: 0,
-            behavior: 'auto',
-          });
+          correctStartPositionIfNeeded();
         });
       });
     },
-    [beginProgrammaticScroll]
+    [
+      beginProgrammaticScroll,
+      correctStartPositionIfNeeded,
+      setIsListScrolledOffIfChanged,
+      setVisualSortedIndexIfChanged,
+    ]
   );
 
   const performScrollToColumn = useCallback(
     (sortedIndex, { behavior = 'smooth', reason = 'unknown' } = {}) => {
-      if (!containerRef.current) return;
+      if (!containerRef.current || sortedIndex <= 0) return;
 
-      const scrollTarget = getScrollTargetForColumn(sortedIndex);
+      const scrollTarget = getScrollTargetForColumn(sortedIndex, carouselGeometry);
       const originalIdx = sortToOriginalRef.current[sortedIndex];
 
       recordFeedCarouselDebug('scroll-to-column', {
@@ -544,13 +676,18 @@ function FeedCarousel({
       beginProgrammaticScroll(reason, scrollTarget);
 
       latestScrollLeftRef.current = scrollTarget;
-      setIsListScrolledOff(scrollTarget > 50);
-      containerRef.current.scrollTo({
-        left: scrollTarget,
+      setIsListScrolledOffIfChanged(scrollTarget > 50);
+      columnVirtualizer.scrollToOffset(scrollTarget, {
         behavior,
       });
     },
-    [beginProgrammaticScroll, getClusterDebugMeta, getScrollTargetForColumn]
+    [
+      beginProgrammaticScroll,
+      carouselGeometry,
+      columnVirtualizer,
+      getClusterDebugMeta,
+      setIsListScrolledOffIfChanged,
+    ]
   );
 
   // scrollToColumn takes a SORTED index
@@ -559,7 +696,6 @@ function FeedCarousel({
       if (!containerRef.current) return;
 
       if (sortedIndex <= 0) {
-        pendingColumnScrollRef.current = null;
         scrollToStart({
           ...options,
           behavior: options.behavior ?? 'smooth',
@@ -567,19 +703,10 @@ function FeedCarousel({
         return;
       }
 
-      const { start, end } = visibleWindowRangeRef.current;
-      const targetOutsideWindow = sortedIndex < start || sortedIndex > end;
-
-      if (targetOutsideWindow) {
-        pendingColumnScrollRef.current = { sortedIndex, options };
-        setVisualSortedIndex((current) => (current === sortedIndex ? current : sortedIndex));
-        return;
-      }
-
-      pendingColumnScrollRef.current = null;
+      setVisualSortedIndexIfChanged(sortedIndex);
       performScrollToColumn(sortedIndex, options);
     },
-    [performScrollToColumn, scrollToStart]
+    [performScrollToColumn, scrollToStart, setVisualSortedIndexIfChanged]
   );
 
   useLayoutEffect(() => {
@@ -587,6 +714,7 @@ function FeedCarousel({
 
     const initialOriginalIndex = sortToOriginalRef.current[0] ?? 0;
     if (initialOriginalIndex !== focusedIndexRef.current) {
+      setVisualSortedIndexIfChanged(0);
       emitFocusedIndexChange('initial-sync', initialOriginalIndex);
       return;
     }
@@ -595,7 +723,13 @@ function FeedCarousel({
     // current column sort: ToC fully visible, first sorted topic selected.
     hasInitialScrollSyncRef.current = true;
     scrollToStart({ behavior: 'auto' });
-  }, [clampedFocusedIndex, emitFocusedIndexChange, scrollToStart, sortedClusters.length]);
+  }, [
+    clampedFocusedIndex,
+    emitFocusedIndexChange,
+    scrollToStart,
+    setVisualSortedIndexIfChanged,
+    sortedClusters.length,
+  ]);
 
   // Scroll to focused cluster when sort mode changes
   const prevSortKeyRef = useRef(`${sortMode}:${sortDirection}`);
@@ -676,52 +810,19 @@ function FeedCarousel({
     return 'far';
   };
 
-  const { visibleStart, visibleEnd, leadingSpacerWidth, trailingSpacerWidth } = useMemo(() => {
-    if (!sortedClusters.length) return { visibleStart: 0, visibleEnd: 0, leadingSpacerWidth: 0, trailingSpacerWidth: 0 };
-    const lastIndex = sortedClusters.length - 1;
-    const windowStart = Math.max(0, visualSortedIndex - VISIBLE_COLUMN_RADIUS - 2);
-    const windowEnd = Math.min(lastIndex, visualSortedIndex + VISIBLE_COLUMN_RADIUS + 2);
-
-    const leadingCount = windowStart;
-    const trailingCount = lastIndex - windowEnd;
-    const calcSpacerWidth = (k) => k > 0 ? k * COLUMN_WIDTH + Math.max(0, k - 1) * GAP : 0;
-
-    return {
-      visibleStart: windowStart,
-      visibleEnd: windowEnd,
-      leadingSpacerWidth: calcSpacerWidth(leadingCount),
-      trailingSpacerWidth: calcSpacerWidth(trailingCount),
-    };
-  }, [sortedClusters.length, visualSortedIndex]);
-
-  visibleWindowRangeRef.current = {
-    start: visibleStart,
-    end: visibleEnd,
-  };
-
-  const visibleOriginalIndices = useMemo(() => {
-    const indices = [];
-    for (let sortedIdx = visibleStart; sortedIdx <= visibleEnd; sortedIdx++) {
-      const originalIdx = sortToOriginal[sortedIdx];
-      if (originalIdx !== undefined) {
-        indices.push(originalIdx);
-      }
-    }
-    return indices;
-  }, [sortToOriginal, visibleEnd, visibleStart]);
+  const visibleOriginalIndices = useMemo(
+    () => getPrefetchOriginalIndices(virtualItems, sortToOriginal, sortedClusters.length),
+    [sortToOriginal, sortedClusters.length, virtualItems]
+  );
+  const visibleOriginalIndicesKey = useMemo(
+    () => visibleOriginalIndices.join(','),
+    [visibleOriginalIndices]
+  );
 
   useEffect(() => {
+    if (!visibleOriginalIndicesKey) return;
     ensureColumnsLoaded?.(visibleOriginalIndices);
-  }, [ensureColumnsLoaded, visibleOriginalIndices]);
-
-  useLayoutEffect(() => {
-    const pendingScroll = pendingColumnScrollRef.current;
-    if (!pendingScroll) return;
-    if (pendingScroll.sortedIndex < visibleStart || pendingScroll.sortedIndex > visibleEnd) return;
-
-    pendingColumnScrollRef.current = null;
-    performScrollToColumn(pendingScroll.sortedIndex, pendingScroll.options);
-  }, [performScrollToColumn, visibleEnd, visibleStart]);
+  }, [ensureColumnsLoaded, visibleOriginalIndices, visibleOriginalIndicesKey]);
 
   if (!topLevelClusters?.length) {
     return (
@@ -752,63 +853,62 @@ function FeedCarousel({
           subNavProps={subNavProps}
         />
 
-        {/* Spacer to center first feed */}
-        <div className={styles.spacer} style={{ width: spacerWidth }} />
+        <div
+          style={{
+            width: columnVirtualizer.getTotalSize(),
+            height: '100%',
+            position: 'relative',
+            flexShrink: 0,
+            marginLeft: spacerWidth,
+          }}
+        >
+          {virtualItems.map((item) => {
+            const sortedIdx = item.index;
+            const cluster = sortedClusters[sortedIdx];
+            const originalIdx = sortToOriginal[sortedIdx];
+            const col = columnData[originalIdx] || {};
+            const tweets = columnRowsMap[originalIdx] || EMPTY_TWEETS;
 
-        {/* Leading spacer replaces omitted columns before window */}
-        {leadingSpacerWidth > 0 && (
-          <div style={{ width: leadingSpacerWidth, minWidth: leadingSpacerWidth, flexShrink: 0 }} aria-hidden="true" />
-        )}
+            if (!cluster || originalIdx === undefined) {
+              return null;
+            }
 
-        {sortedClusters.slice(visibleStart, visibleEnd + 1).map((cluster, i) => {
-          const sortedIdx = visibleStart + i;
-          const originalIdx = sortToOriginal[sortedIdx];
-          const col = columnData[originalIdx] || {};
-          const tweets = columnRowsMap[originalIdx] || EMPTY_TWEETS;
-          const distance = Math.abs(sortedIdx - visualSortedIndex);
-          const isInViewRadius = distance <= VISIBLE_COLUMN_RADIUS;
-
-          if (!isInViewRadius) {
             return (
               <div
-                key={cluster.cluster}
-                className={styles.columnPlaceholder}
-                style={{ width: COLUMN_WIDTH, minWidth: COLUMN_WIDTH }}
-                aria-hidden="true"
-              />
+                key={item.key}
+                style={{
+                  position: 'absolute',
+                  top: 0,
+                  left: 0,
+                  display: 'flex',
+                  width: FEED_CAROUSEL_COLUMN_WIDTH,
+                  height: '100%',
+                  minHeight: 0,
+                  transform: `translateX(${item.start - trackOffset}px)`,
+                }}
+              >
+                <FeedColumn
+                  columnIndex={originalIdx}
+                  cluster={cluster}
+                  tweets={tweets}
+                  focusState={getFocusState(sortedIdx)}
+                  columnWidth={FEED_CAROUSEL_COLUMN_WIDTH}
+                  subClusters={cluster.children}
+                  activeSubCluster={activeSubClusters[originalIdx] || null}
+                  onSubClusterSelect={handleColumnSubClusterClick}
+                  dataset={dataset}
+                  clusterMap={clusterMap}
+                  loading={col.loading}
+                  hasMore={col.hasMore}
+                  onLoadMore={loadMore}
+                  nodeStats={nodeStats}
+                  onViewThread={handleOpenThreadOverlay}
+                  onViewQuotes={onViewQuotes}
+                />
+              </div>
             );
-          }
-
-          return (
-            <div key={cluster.cluster} style={{ flexShrink: 0 }}>
-              <FeedColumn
-                columnIndex={originalIdx}
-                cluster={cluster}
-                tweets={tweets}
-                focusState={getFocusState(sortedIdx)}
-                columnWidth={COLUMN_WIDTH}
-                subClusters={cluster.children}
-                activeSubCluster={activeSubClusters[originalIdx] || null}
-                onSubClusterSelect={handleColumnSubClusterClick}
-                dataset={dataset}
-                clusterMap={clusterMap}
-                loading={col.loading}
-                hasMore={col.hasMore}
-                onLoadMore={loadMore}
-                onHover={onHover}
-                onClick={onClick}
-                nodeStats={nodeStats}
-                onViewThread={handleOpenThreadOverlay}
-                onViewQuotes={onViewQuotes}
-              />
-            </div>
-          );
-        })}
-
-        {/* Trailing spacer replaces omitted columns after window */}
-        {trailingSpacerWidth > 0 && (
-          <div style={{ width: trailingSpacerWidth, minWidth: trailingSpacerWidth, flexShrink: 0 }} aria-hidden="true" />
-        )}
+          })}
+        </div>
       </div>
 
       {/* Left-edge hover zone with visible tab indicator */}
@@ -850,8 +950,6 @@ FeedCarousel.propTypes = {
   clusterMap: PropTypes.object,
   focusedClusterIndex: PropTypes.number,
   onFocusedIndexChange: PropTypes.func.isRequired,
-  onHover: PropTypes.func,
-  onClick: PropTypes.func,
   nodeStats: PropTypes.shape({
     get: PropTypes.func,
   }),

@@ -5,8 +5,8 @@ and all serving columns from input.parquet.  This is enough for the UI
 (including the thread carousel) to load while skipping expensive pipeline stages.
 
 Usage:
-    uv run python3 tools/create_stub_scope.py --dataset visakanv-2024
-    uv run python3 tools/create_stub_scope.py --dataset visakanv-2024 --scope_id scopes-001
+    uv run python3 tools/create_stub_scope.py --dataset visakanv-tweets
+    uv run python3 tools/create_stub_scope.py --dataset visakanv-tweets --scope_id scopes-001
 """
 
 from __future__ import annotations

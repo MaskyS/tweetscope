@@ -1,4 +1,5 @@
 import { memo, forwardRef } from 'react';
+import PropTypes from 'prop-types';
 import { Heart } from 'lucide-react';
 import styles from './TopicCard.module.scss';
 
@@ -30,7 +31,17 @@ function getMetric(cluster, sortMode) {
 }
 
 const TopicCard = forwardRef(function TopicCard(
-  { cluster, isActive, isUnclustered, onClick, clusterColor, sortMode, isExpanded, onClickSubCluster },
+  {
+    topicIndex,
+    cluster,
+    isActive,
+    isUnclustered,
+    onClick,
+    clusterColor,
+    sortMode,
+    isExpanded,
+    onClickSubCluster,
+  },
   ref
 ) {
   const subClusters = cluster.children || [];
@@ -44,6 +55,8 @@ const TopicCard = forwardRef(function TopicCard(
   return (
     <button
       ref={ref}
+      type="button"
+      data-topic-index={topicIndex}
       className={`${styles.row} ${isActive ? styles.active : ''} ${isUnclustered ? styles.unclustered : ''}`}
       onClick={onClick}
       style={{ '--row-color': clusterColor || 'transparent' }}
@@ -96,5 +109,30 @@ const TopicCard = forwardRef(function TopicCard(
     </button>
   );
 });
+
+TopicCard.propTypes = {
+  topicIndex: PropTypes.number,
+  cluster: PropTypes.shape({
+    cluster: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
+    label: PropTypes.string,
+    description: PropTypes.string,
+    children: PropTypes.arrayOf(PropTypes.shape({
+      cluster: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
+      label: PropTypes.string,
+      count: PropTypes.number,
+    })),
+    cumulativeLikes: PropTypes.number,
+    likes: PropTypes.number,
+    cumulativeCount: PropTypes.number,
+    count: PropTypes.number,
+  }).isRequired,
+  isActive: PropTypes.bool,
+  isUnclustered: PropTypes.bool,
+  onClick: PropTypes.func,
+  clusterColor: PropTypes.string,
+  sortMode: PropTypes.string,
+  isExpanded: PropTypes.bool,
+  onClickSubCluster: PropTypes.func,
+};
 
 export default memo(TopicCard);

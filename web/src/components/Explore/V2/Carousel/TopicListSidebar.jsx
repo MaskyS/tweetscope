@@ -3,11 +3,13 @@ import {
   useCallback,
   useMemo,
   useEffect,
+  useLayoutEffect,
   useRef,
   useDeferredValue,
   memo,
 } from 'react';
 import PropTypes from 'prop-types';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import { Search, ChevronDown, ArrowDownNarrowWide, ArrowUpNarrowWide } from 'lucide-react';
 import { useScope } from '../../../../contexts/ScopeContext';
 import { useClusterColors, resolveClusterColorCSS } from '../../../../hooks/useClusterColors';
@@ -16,6 +18,9 @@ import { recordFeedCarouselDebug } from '../../../../lib/feedCarouselDebug';
 import SubNav from '../../../SubNav';
 import TopicCard from '../TopicDirectory/TopicCard';
 import styles from './TopicListSidebar.module.scss';
+
+const TOPIC_LIST_ESTIMATED_ROW_HEIGHT = 120;
+const TOPIC_LIST_OVERSCAN = 6;
 
 function TopicListSidebar({
   containerRef,
@@ -41,22 +46,20 @@ function TopicListSidebar({
   const [searchQuery, setSearchQuery] = useState('');
   const searchRef = useRef(null);
   const listRef = useRef(null);
-  const activeCardRef = useRef(null);
   const deferredSearchQuery = useDeferredValue(searchQuery);
 
-  // Build indexed list, identifying unclustered for styling
-  const clustersWithIndex = useMemo(() => {
-    return topLevelClusters.map((c, i) => ({
-      cluster: c,
-      index: i,
-      isUnclustered: String(c.cluster) === 'unknown',
+  const { clustersWithIndex, realCount } = useMemo(() => {
+    const nextClustersWithIndex = topLevelClusters.map((cluster, index) => ({
+      cluster,
+      index,
+      isUnclustered: String(cluster.cluster) === 'unknown',
     }));
-  }, [topLevelClusters]);
 
-  // Separate for footer count (exclude unclustered)
-  const realCount = useMemo(() => {
-    return clustersWithIndex.filter((c) => !c.isUnclustered).length;
-  }, [clustersWithIndex]);
+    return {
+      clustersWithIndex: nextClustersWithIndex,
+      realCount: nextClustersWithIndex.filter((item) => !item.isUnclustered).length,
+    };
+  }, [topLevelClusters]);
 
   // Filter by search (search only affects the list, not columns)
   const filteredClusters = useMemo(() => {
@@ -72,37 +75,48 @@ function TopicListSidebar({
     });
   }, [deferredSearchQuery, clustersWithIndex]);
 
-  // Auto-scroll active card into view — scoped to the list container
-  // so it doesn't bubble up and scroll the parent carousel
-  useEffect(() => {
-    const card = activeCardRef.current;
+  const rowVirtualizer = useVirtualizer({
+    count: filteredClusters.length,
+    getScrollElement: () => listRef.current,
+    estimateSize: () => TOPIC_LIST_ESTIMATED_ROW_HEIGHT,
+    overscan: TOPIC_LIST_OVERSCAN,
+    getItemKey: (index) => filteredClusters[index]?.cluster?.cluster ?? index,
+    measureElement: (element) =>
+      element?.getBoundingClientRect().height ?? TOPIC_LIST_ESTIMATED_ROW_HEIGHT,
+  });
+
+  const virtualRows = rowVirtualizer.getVirtualItems();
+
+  const activeFilteredIndex = useMemo(
+    () => filteredClusters.findIndex(({ index }) => index === focusedIndex),
+    [filteredClusters, focusedIndex]
+  );
+
+  // Auto-scroll the active row into view within the ToC list without relying
+  // on the DOM node being mounted.
+  useLayoutEffect(() => {
     const list = listRef.current;
-    if (!card || !list) return;
+    if (!list || activeFilteredIndex < 0) return undefined;
 
-    const cardRect = card.getBoundingClientRect();
-    const listRect = list.getBoundingClientRect();
     const startingScrollTop = list.scrollTop;
+    rowVirtualizer.scrollToIndex(activeFilteredIndex, { align: 'auto' });
 
-    if (cardRect.top < listRect.top) {
-      list.scrollTop += cardRect.top - listRect.top;
+    const frameId = window.requestAnimationFrame(() => {
+      const nextScrollTop = list.scrollTop;
+      if (nextScrollTop === startingScrollTop) return;
+      const activeCluster = filteredClusters[activeFilteredIndex];
+
       recordFeedCarouselDebug('toc-vertical-autoscroll', {
-        direction: 'up',
-        focusedIndex,
-        label: topLevelClusters[focusedIndex]?.label ?? null,
+        direction: nextScrollTop < startingScrollTop ? 'up' : 'down',
+        focusedIndex: activeCluster?.index ?? null,
+        label: activeCluster?.cluster?.label ?? null,
         fromScrollTop: startingScrollTop,
-        toScrollTop: list.scrollTop,
+        toScrollTop: nextScrollTop,
       });
-    } else if (cardRect.bottom > listRect.bottom) {
-      list.scrollTop += cardRect.bottom - listRect.bottom;
-      recordFeedCarouselDebug('toc-vertical-autoscroll', {
-        direction: 'down',
-        focusedIndex,
-        label: topLevelClusters[focusedIndex]?.label ?? null,
-        fromScrollTop: startingScrollTop,
-        toScrollTop: list.scrollTop,
-      });
-    }
-  }, [focusedIndex, topLevelClusters]);
+    });
+
+    return () => window.cancelAnimationFrame(frameId);
+  }, [activeFilteredIndex, filteredClusters, rowVirtualizer]);
 
   // Keyboard: "/" to focus search, Escape to clear
   // Disabled for overlay instance to avoid duplicate global listeners
@@ -212,24 +226,40 @@ function TopicListSidebar({
 
       {/* Scrollable list */}
       <div ref={listRef} className={styles.list}>
-        {filteredClusters.map(({ cluster, index, isUnclustered }) => {
-          const isActive = index === focusedIndex;
-          return (
-            <div key={cluster.cluster}>
-              <TopicCard
-                ref={isActive ? activeCardRef : undefined}
-                cluster={cluster}
-                isActive={isActive}
-                isUnclustered={isUnclustered}
-                onClick={() => handleCardClick(index)}
-                clusterColor={isUnclustered ? undefined : getClusterColor(cluster.cluster)}
-                sortMode={sortMode}
-                isExpanded={!isUnclustered && Boolean(cluster.children?.length)}
-                onClickSubCluster={!isUnclustered ? (subId) => handleSubClusterClick(index, subId) : undefined}
-              />
-            </div>
-          );
-        })}
+        <div
+          className={styles.listCanvas}
+          aria-hidden="true"
+          style={{ height: rowVirtualizer.getTotalSize() }}
+        >
+          {virtualRows.map((virtualRow) => {
+            const item = filteredClusters[virtualRow.index];
+            if (!item) return null;
+
+            const { cluster, index, isUnclustered } = item;
+            const isActive = index === focusedIndex;
+            return (
+              <div
+                key={virtualRow.key}
+                ref={rowVirtualizer.measureElement}
+                data-index={virtualRow.index}
+                className={styles.listItem}
+                style={{ transform: `translateY(${virtualRow.start}px)` }}
+              >
+                <TopicCard
+                  topicIndex={index}
+                  cluster={cluster}
+                  isActive={isActive}
+                  isUnclustered={isUnclustered}
+                  onClick={() => handleCardClick(index)}
+                  clusterColor={isUnclustered ? undefined : getClusterColor(cluster.cluster)}
+                  sortMode={sortMode}
+                  isExpanded={!isUnclustered && Boolean(cluster.children?.length)}
+                  onClickSubCluster={!isUnclustered ? (subId) => handleSubClusterClick(index, subId) : undefined}
+                />
+              </div>
+            );
+          })}
+        </div>
       </div>
 
       {/* Footer */}

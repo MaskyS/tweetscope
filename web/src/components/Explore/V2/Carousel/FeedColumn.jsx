@@ -36,8 +36,6 @@ function FeedColumn({
   loading,
   hasMore,
   onLoadMore,
-  onHover,
-  onClick,
   nodeStats,
   onViewThread,
   onViewQuotes,
@@ -51,6 +49,7 @@ function FeedColumn({
   const [descExpanded, setDescExpanded] = useState(false);
   const [renderBudget, setRenderBudget] = useState(INITIAL_RENDER_BUDGET);
   const sentinelRef = useRef(null);
+  const tweetScrollRef = useRef(null);
 
   // Reset render budget when the available list shrinks under the current budget.
   useEffect(() => {
@@ -101,7 +100,8 @@ function FeedColumn({
   useEffect(() => {
     if (!hasMoreToReveal) return;
     const sentinel = sentinelRef.current;
-    if (!sentinel) return;
+    const tweetScroll = tweetScrollRef.current;
+    if (!sentinel || !tweetScroll) return;
 
     const observer = new IntersectionObserver(
       (entries) => {
@@ -109,7 +109,10 @@ function FeedColumn({
           setRenderBudget((prev) => prev + RENDER_CHUNK_SIZE);
         }
       },
-      { rootMargin: '200px' }
+      {
+        root: tweetScroll,
+        rootMargin: '200px 0px',
+      }
     );
     observer.observe(sentinel);
     return () => observer.disconnect();
@@ -155,7 +158,7 @@ function FeedColumn({
           onSelect={handleSelectSubCluster}
         />
 
-        <div className={styles.tweetScroll}>
+        <div ref={tweetScrollRef} className={styles.tweetScroll}>
           <div className={styles.feedList}>
             {visibleItems.map((item) => {
               if (item.type === 'thread') {
@@ -167,8 +170,6 @@ function FeedColumn({
                     textColumn={dataset?.text_column}
                     clusterMap={clusterMap}
                     nodeStats={nodeStats}
-                    onHover={onHover}
-                    onClick={onClick}
                     onViewThread={onViewThread}
                     onViewQuotes={onViewQuotes}
                     hasMissingAncestors={item.hasMissingAncestors}
@@ -188,8 +189,6 @@ function FeedColumn({
                     textColumn={dataset?.text_column}
                     clusterMap={clusterMap}
                     nodeStats={nodeStats}
-                    onHover={onHover}
-                    onClick={onClick}
                     onViewThread={onViewThread}
                     onViewQuotes={onViewQuotes}
                     datasetId={dataset?.id}
@@ -204,8 +203,6 @@ function FeedColumn({
                   row={row}
                   textColumn={dataset?.text_column}
                   clusterInfo={clusterMap?.[row.ls_index]}
-                  onHover={onHover}
-                  onClick={onClick}
                   nodeStats={nodeStats?.get(row.ls_index)}
                   onViewThread={onViewThread}
                   onViewQuotes={onViewQuotes}

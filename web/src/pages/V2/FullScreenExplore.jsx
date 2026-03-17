@@ -1550,8 +1550,6 @@ function ExploreContent() {
                     clusterMap={clusterMap}
                     focusedClusterIndex={focusedClusterIndex}
                     onFocusedIndexChange={setFocusedClusterIndex}
-                    onHover={undefined}
-                    onClick={undefined}
                     nodeStats={nodeStats}
                     onViewQuotes={handleViewQuotes}
                     subNavProps={expandedSubNavProps}

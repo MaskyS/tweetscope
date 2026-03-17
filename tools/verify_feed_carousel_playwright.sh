@@ -38,9 +38,18 @@ async page => {
       throw new Error(`${message}${suffix}`)
     }
   }
+  const waitFor = async (fn, timeoutMs = 30000, stepMs = 250, label = 'page state') => {
+    const start = Date.now()
+    while (Date.now() - start < timeoutMs) {
+      const value = await fn()
+      if (value) return value
+      await wait(stepMs)
+    }
+    throw new Error(`Timed out waiting for ${label}`)
+  }
 
   const clusterButton = (text) =>
-    page.locator('div[class*="_list_"] > div > button').filter({ hasText: text }).first()
+    page.locator('div[class*="_list_"] button[data-topic-index]').filter({ hasText: text }).first()
 
   const subclusterButton = (text) =>
     page.locator('div[class*="_list_"] [role="button"]').filter({ hasText: text }).first()
@@ -50,9 +59,16 @@ async page => {
     const toc = document
       .querySelector('input[placeholder="Search topics..."]')
       ?.closest('div[class*="_container_"]')
-    const active = Array.from(
-      document.querySelectorAll('div[class*="_list_"] > div > button')
-    ).find((button) => button.className.includes('_active_'))
+    const buttons = Array.from(
+      document.querySelectorAll('div[class*="_list_"] button[data-topic-index]')
+    )
+    const active = buttons.find((button) => button.className.includes('_active_'))
+    const mountedColumns = Array.from(
+      document.querySelectorAll('div[class*="_columnOuter_"]')
+    )
+    const focusedColumns = mountedColumns
+      .filter((column) => column.className.includes('_focused_'))
+      .map((column) => column.querySelector('h3')?.innerText?.trim() ?? null)
     const events = window.__LATENT_SCOPE_FEED_CAROUSEL_DEBUG_EVENTS__ || []
 
     return {
@@ -63,13 +79,39 @@ async page => {
       tocOpacity: toc ? getComputedStyle(toc).opacity : null,
       tocLeft: toc?.getBoundingClientRect().left ?? null,
       tocRight: toc?.getBoundingClientRect().right ?? null,
+      activeTopicIndex: active ? Number(active.dataset.topicIndex) : null,
       activeText: active?.innerText?.replace(/\s+/g, ' ').trim().slice(0, 140) ?? null,
+      focusedColumnLabels: focusedColumns,
+      firstMountedColumnLabel: mountedColumns[0]?.querySelector('h3')?.innerText?.trim() ?? null,
+      visibleTopicButtons: buttons.slice(0, 12).map((button) => {
+        const rect = button.getBoundingClientRect()
+        return {
+          topicIndex: Number(button.dataset.topicIndex),
+          top: Math.round(rect.top),
+          bottom: Math.round(rect.bottom),
+          height: Math.round(rect.height),
+          text: button.innerText?.replace(/\s+/g, ' ').trim().slice(0, 80) ?? null,
+        }
+      }),
       sortTitle: document
         .querySelector('button[title="Descending"], button[title="Ascending"]')
         ?.getAttribute('title') ?? null,
       debugTail: events.slice(-6),
     }
   })
+
+  const assertVisibleTopicButtonsDoNotOverlap = (buttons, message, state) => {
+    if (!Array.isArray(buttons) || buttons.length < 2) return
+
+    const ordered = [...buttons].sort((a, b) => a.top - b.top)
+    for (let i = 1; i < ordered.length; i += 1) {
+      const prev = ordered[i - 1]
+      const next = ordered[i]
+      if (next.top < prev.bottom - 1) {
+        throw new Error(`${message}\n${JSON.stringify({ state, prev, next }, null, 2)}`)
+      }
+    }
+  }
 
   const revealStickyToc = async () => {
     await page.mouse.move(20, 200)
@@ -79,7 +121,21 @@ async page => {
 
     await page.evaluate(() => {
       const hoverZone = document.querySelector('div[class*="_hoverZone_"]')
-      hoverZone?.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }))
+      if (!hoverZone) return
+      const rect = hoverZone.getBoundingClientRect()
+      const clientX = Math.round(rect.left + Math.min(20, rect.width / 2))
+      const clientY = Math.round(rect.top + rect.height / 2)
+
+      hoverZone.dispatchEvent(new MouseEvent('mouseover', {
+        bubbles: true,
+        clientX,
+        clientY,
+      }))
+      hoverZone.dispatchEvent(new MouseEvent('mousemove', {
+        bubbles: true,
+        clientX,
+        clientY,
+      }))
     })
     await wait(400)
     state = await getState()
@@ -102,6 +158,49 @@ async page => {
     )
     return state
   }
+
+  const getExpectedScrollTarget = async (topicIndex) => page.evaluate((nextTopicIndex) => {
+    const carousel = document.querySelector('div[class*="_carousel_"]')
+    if (!carousel) return null
+
+    const columnWidth = 550
+    const gap = 32
+    const listWidth = 360
+    const paddingLeft = Number.parseFloat(getComputedStyle(carousel).paddingLeft) || 0
+    const viewportWidth = carousel.clientWidth || window.innerWidth
+    const centerOffset = (viewportWidth - columnWidth) / 2
+    const spacerWidth = Math.max(0, centerOffset - (paddingLeft + listWidth + gap))
+    const trackOffset = paddingLeft + listWidth + gap + spacerWidth
+
+    if (nextTopicIndex <= 0) return 0
+    return Math.max(0, trackOffset + nextTopicIndex * (columnWidth + gap) - centerOffset)
+  }, topicIndex)
+
+  const waitForSnapAlignment = async (topicIndex, expectedScrollLeft) =>
+    waitFor(
+      () => page.evaluate(
+        ({ nextTopicIndex, nextScrollLeft }) => {
+          const carousel = document.querySelector('div[class*="_carousel_"]')
+          const active = Array.from(
+            document.querySelectorAll('div[class*="_list_"] button[data-topic-index]')
+          ).find((button) => button.className.includes('_active_'))
+
+          if (!carousel || !active) return null
+          const activeTopicIndex = Number(active.dataset.topicIndex)
+          if (activeTopicIndex !== nextTopicIndex) return null
+          if (Math.abs(carousel.scrollLeft - nextScrollLeft) > 12) return null
+
+          return {
+            scrollLeft: carousel.scrollLeft,
+            activeTopicIndex,
+          }
+        },
+        { nextTopicIndex: topicIndex, nextScrollLeft: expectedScrollLeft }
+      ),
+      5000,
+      100,
+      `manual snap alignment for topic ${topicIndex}`
+    )
 
   const setCarouselScroll = async (scrollLeft) => {
     await page.evaluate((nextScrollLeft) => {
@@ -139,6 +238,46 @@ async page => {
   }
   assert(sidebarReady, 'Expanded carousel sidebar did not render in time')
   await wait(2000)
+
+  const initialState = await getState()
+  assert(initialState.scrollLeft === 0,
+    'Expanded carousel did not start at true scrollLeft = 0',
+    initialState)
+  assert(initialState.activeTopicIndex === 0,
+    'Expanded carousel did not start with the first sorted topic active',
+    initialState)
+  assert(initialState.focusedColumnLabels.length === 1,
+    'Expanded carousel did not render exactly one focused column on initial load',
+    initialState)
+  assert(initialState.focusedColumnLabels[0] === initialState.firstMountedColumnLabel,
+    'Expanded carousel did not focus the first mounted column on initial load',
+    initialState)
+  assertVisibleTopicButtonsDoNotOverlap(
+    initialState.visibleTopicButtons,
+    'Visible topic buttons overlapped on initial expanded render',
+    initialState
+  )
+
+  const expectedSecondTopicScrollLeft = await getExpectedScrollTarget(1)
+  await setCarouselScroll(400)
+  await waitForSnapAlignment(1, expectedSecondTopicScrollLeft)
+  const snappedSecondTopicState = await getState()
+  assert(snappedSecondTopicState.activeTopicIndex === 1,
+    'Manual horizontal scroll did not snap focus to the second topic',
+    { expectedSecondTopicScrollLeft, snappedSecondTopicState })
+  assert(Math.abs((snappedSecondTopicState.scrollLeft ?? 0) - expectedSecondTopicScrollLeft) <= 12,
+    'Manual horizontal scroll did not settle to the second topic center',
+    { expectedSecondTopicScrollLeft, snappedSecondTopicState })
+
+  await setCarouselScroll(120)
+  await waitForSnapAlignment(0, 0)
+  const snappedStartState = await getState()
+  assert(snappedStartState.activeTopicIndex === 0,
+    'Manual horizontal scroll near the start did not snap focus back to the first topic',
+    snappedStartState)
+  assert(snappedStartState.scrollLeft === 0,
+    'Manual horizontal scroll near the start did not return to true start',
+    snappedStartState)
 
   const resetTrials = []
   for (let trial = 0; trial < 3; trial += 1) {
@@ -202,7 +341,7 @@ async page => {
     window.__LATENT_SCOPE_FEED_CAROUSEL_DEBUG_EVENTS__ = []
   })
   await page.evaluate(() => {
-    const target = Array.from(document.querySelectorAll('div[class*="_list_"] > div > button'))
+    const target = Array.from(document.querySelectorAll('div[class*="_list_"] button[data-topic-index]'))
       .find((button) => button.innerText.includes('Applying ML to decode animal vocalizations'))
     target?.click()
   })
@@ -233,6 +372,8 @@ async page => {
 
   const summary = {
     url: page.url(),
+    snappedSecondTopicState,
+    snappedStartState,
     resetTrials,
     hoveredState,
     afterExitState,

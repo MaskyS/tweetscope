@@ -14,7 +14,6 @@
   display: flex;
   overflow-x: auto;
   overflow-y: hidden;
-  scroll-snap-type: x mandatory;
   gap: 32px;
   padding-top: var(--space-3);
   padding-left: 0;
@@ -37,7 +36,6 @@
   flex-shrink: 0;
   height: 100%;
   pointer-events: none;
-  scroll-snap-align: center;
 }
 
 .fadeRight {

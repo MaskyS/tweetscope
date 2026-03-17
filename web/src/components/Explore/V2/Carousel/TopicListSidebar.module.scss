@@ -8,9 +8,6 @@
   flex: 0 0 360px;
   width: 360px;
   min-width: 360px;
-  /* Make the ToC itself the first valid snap target so expanded mode can open
-     at the true start of the strip instead of snapping to a centered column. */
-  scroll-snap-align: start;
 }
 
 .stickyShell {
@@ -217,8 +214,8 @@
 
 .list {
   flex: 1;
-  display: flex;
-  flex-direction: column;
+  position: relative;
+  display: block;
   overflow-y: auto;
   overflow-x: hidden;
   border-top: 1px solid var(--glass-border-subtle);
@@ -238,6 +235,19 @@
     background: var(--borders-color-border-1);
     border-radius: var(--radius-full);
   }
+}
+
+.listCanvas {
+  position: relative;
+  width: 100%;
+  min-width: 100%;
+}
+
+.listItem {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
 }
 
 /* ── Footer ── */
