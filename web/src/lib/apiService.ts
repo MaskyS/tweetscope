@@ -88,11 +88,12 @@ export const viewClient = {
   fetchScopePoints: async (
     datasetId: string,
     scopeId: string,
-    options: RequestOptions = {}
+    options: RequestOptions & { sample?: number } = {}
   ): Promise<ScopePoint[]> => {
-    const { signal } = options;
+    const { signal, sample } = options;
     const res = await client.api.datasets[':dataset'].views[':view'].points.$get({
       param: { dataset: datasetId, view: scopeId },
+      query: sample ? { sample } : {},
     }, { init: { signal } });
     if (!res.ok) {
       const err: Error & { status?: number } = new Error(`Failed to fetch scope points (${res.status})`);

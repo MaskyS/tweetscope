@@ -1,7 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import PropTypes from 'prop-types';
 
 import { viewClient } from '../lib/apiService';
+import { queryKeys } from '../query/keys';
 import { getClusterToneColor } from '../lib/clusterColors';
 import { useColorMode } from '../hooks/useColorMode';
 
@@ -17,16 +19,6 @@ function isFinitePoint(point) {
     Number.isFinite(Number(point.x)) &&
     Number.isFinite(Number(point.y))
   );
-}
-
-function samplePoints(points, targetCount) {
-  if (!Array.isArray(points) || points.length <= targetCount) return points;
-  const sampled = [];
-  const step = points.length / targetCount;
-  for (let i = 0; i < targetCount; i += 1) {
-    sampled.push(points[Math.floor(i * step)]);
-  }
-  return sampled;
 }
 
 function getPreviewRadius(pointCount) {
@@ -48,29 +40,16 @@ function toCanvasY(y) {
 function ScopeThumbnail({ datasetId, scopeId, className, alt, fallbackSrc }) {
   const canvasRef = useRef(null);
   const { isDark } = useColorMode();
-  const [points, setPoints] = useState([]);
-  const [loadStatus, setLoadStatus] = useState('loading');
 
-  useEffect(() => {
-    const controller = new AbortController();
-    setLoadStatus('loading');
-    setPoints([]);
+  const { data: points = [], status } = useQuery({
+    queryKey: queryKeys.scopeThumbnailPoints(datasetId, scopeId),
+    queryFn: ({ signal }) =>
+      viewClient.fetchScopePoints(datasetId, scopeId, { signal, sample: MAX_RENDER_POINTS })
+        .then((rows) => (Array.isArray(rows) ? rows.filter(isFinitePoint) : [])),
+    staleTime: 5 * 60 * 1000,
+  });
 
-    viewClient.fetchScopePoints(datasetId, scopeId, { signal: controller.signal })
-      .then((rows) => {
-        const validRows = Array.isArray(rows) ? rows.filter(isFinitePoint) : [];
-        setPoints(samplePoints(validRows, MAX_RENDER_POINTS));
-        setLoadStatus('ready');
-      })
-      .catch((error) => {
-        if (error?.name !== 'AbortError') {
-          setLoadStatus('error');
-        }
-      });
-
-    return () => controller.abort();
-  }, [datasetId, scopeId]);
-
+  const loadStatus = status === 'success' ? 'ready' : status === 'error' ? 'error' : 'loading';
   const hasRenderablePoints = points.length > 0;
 
   const pointStyle = useMemo(() => {

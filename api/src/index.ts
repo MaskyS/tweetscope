@@ -18,15 +18,21 @@ import { jobsRoutes } from "./routes/jobs.js";
 const app = new Hono();
 
 type AppMode = "studio" | "hosted" | "single_profile";
+const isProduction = process.env.NODE_ENV === "production";
 
 function parseBool(raw: string | undefined): boolean {
   if (!raw) return false;
   return ["1", "true", "t", "yes", "y", "on"].includes(raw.trim().toLowerCase());
 }
 
+function parsePositiveInt(raw: string | undefined, fallback: number): number {
+  const parsed = Number.parseInt(raw ?? "", 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
 function parseOrigins(raw: string | undefined): string | string[] {
   if (!raw || !raw.trim()) {
-    if (process.env.NODE_ENV === "production") {
+    if (isProduction) {
       console.warn("CORS_ORIGIN not set — defaulting to restrictive. Set CORS_ORIGIN env var.");
       return [];
     }
@@ -94,16 +100,30 @@ app.use(
 
 // --- Rate Limiting ---
 
+const rateLimitWindowMs = parsePositiveInt(process.env.LATENT_SCOPE_RATE_LIMIT_WINDOW_MS, 60 * 1000);
+const searchLimit = parsePositiveInt(
+  process.env.LATENT_SCOPE_SEARCH_RATE_LIMIT,
+  isProduction ? 20 : 500
+);
+const globalLimit = parsePositiveInt(
+  process.env.LATENT_SCOPE_GLOBAL_RATE_LIMIT,
+  isProduction ? 200 : 5000
+);
+const rateLimitKey = (c: any) =>
+  c.req.header("x-forwarded-for") ??
+  c.req.header("x-real-ip") ??
+  (isProduction ? "unknown" : "dev-local");
+
 const searchLimiter = rateLimiter({
-  windowMs: 60 * 1000,
-  limit: 20,
-  keyGenerator: (c: any) => c.req.header("x-forwarded-for") ?? "unknown",
+  windowMs: rateLimitWindowMs,
+  limit: searchLimit,
+  keyGenerator: rateLimitKey,
 });
 
 const globalLimiter = rateLimiter({
-  windowMs: 60 * 1000,
-  limit: 200,
-  keyGenerator: (c: any) => c.req.header("x-forwarded-for") ?? "unknown",
+  windowMs: rateLimitWindowMs,
+  limit: globalLimit,
+  keyGenerator: rateLimitKey,
 });
 
 app.use("/api/search/*", searchLimiter);
@@ -136,7 +156,7 @@ const routes = app
 const port = parseInt(process.env.PORT ?? "3000", 10);
 
 // For local dev with @hono/node-server
-if (process.env.NODE_ENV !== "production") {
+if (!isProduction) {
   const { serve } = await import("@hono/node-server");
   serve({ fetch: app.fetch, port }, (info) => {
     console.log(`TweetScope API listening on http://localhost:${info.port}`);

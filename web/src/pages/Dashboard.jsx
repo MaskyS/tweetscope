@@ -1,27 +1,33 @@
-import { useEffect, useState, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback } from 'react';
 import { Link } from 'react-router-dom';
+import { useQuery, useQueries } from '@tanstack/react-query';
 import PropTypes from 'prop-types';
 import { apiUrl, catalogClient } from '../lib/apiService';
+import { queryKeys } from '../query/keys';
 import ScopeThumbnail from '../components/ScopeThumbnail';
 
 import styles from './Dashboard.module.scss';
 
 function Dashboard({ appConfig = null }) {
-  const [datasets, setDatasets] = useState([]);
-  const [scopes, setScopes] = useState({});
-  const [loading, setLoading] = useState(true);
+  const { data: datasets = [], isLoading: loading } = useQuery({
+    queryKey: queryKeys.datasets(),
+    queryFn: ({ signal }) => catalogClient.fetchDatasets({ signal }),
+  });
 
-  useEffect(() => {
-    catalogClient.fetchDatasets().then(setDatasets).finally(() => setLoading(false));
-  }, []);
-
-  useEffect(() => {
-    datasets.forEach((dataset) => {
-      catalogClient.fetchScopes(dataset.id).then((data) =>
-        setScopes((prev) => ({ ...prev, [dataset.id]: data }))
-      );
-    });
-  }, [datasets]);
+  const scopes = useQueries({
+    queries: datasets.map((ds) => ({
+      queryKey: queryKeys.scopes(ds.id),
+      queryFn: ({ signal }) => catalogClient.fetchScopes(ds.id, { signal }),
+      enabled: !!ds.id,
+    })),
+    combine: useCallback((results) => {
+      const map = {};
+      datasets.forEach((ds, i) => {
+        if (results[i]?.data) map[ds.id] = results[i].data;
+      });
+      return map;
+    }, [datasets]),
+  });
 
   // Group datasets: merge {name}-likes with its parent into one card
   const collections = useMemo(() => {
@@ -215,6 +221,8 @@ function CollectionCard({ collection }) {
             src={avatarUrl}
             alt={displayName}
             className={styles.avatar}
+            loading="lazy"
+            decoding="async"
             onError={onAvatarError}
           />
         ) : (

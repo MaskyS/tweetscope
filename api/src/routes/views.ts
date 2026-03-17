@@ -1,4 +1,6 @@
 import { Hono } from "hono";
+import { zValidator } from "@hono/zod-validator";
+import { z } from "zod";
 import { getDatasetTable, getTableColumns, paginatedScan, resolveDatasetTableId } from "../lib/lancedb.js";
 import {
   DATA_DIR,
@@ -16,6 +18,20 @@ import { getActiveScope } from "../lib/catalogRepo.js";
 const contractRequired = Object.keys(scopeContract.required_columns);
 const contractOptional = Object.keys(scopeContract.optional_columns ?? {});
 const contractSelected = [...new Set([...contractRequired, ...contractOptional])];
+
+const pointsQuerySchema = z.object({
+  sample: z.coerce.number().int().min(1).max(10000).optional(),
+});
+
+function deterministicSample<T>(arr: T[], k: number): T[] {
+  if (arr.length <= k) return arr;
+  const step = arr.length / k;
+  const result: T[] = [];
+  for (let i = 0; i < k; i++) {
+    result.push(arr[Math.floor(i * step)]);
+  }
+  return result;
+}
 
 class ContractViolationError extends Error {
   violation: NonNullable<ReturnType<typeof validateRequiredColumns>>;
@@ -93,32 +109,41 @@ export const viewsRoutes = new Hono()
       return c.json({ error: "View not found" }, 404);
     }
   })
-  .get("/datasets/:dataset/views/:view/points", async (c) => {
-    const { dataset, view } = c.req.param();
-    try {
-      const tableId = await resolveViewTableId(dataset, view);
-      const table = await getDatasetTable(dataset, tableId);
-      const tableCols = await getTableColumns(tableId);
+  .get("/datasets/:dataset/views/:view/points",
+    zValidator("query", pointsQuerySchema),
+    async (c) => {
+      const { dataset, view } = c.req.param();
+      const sampleSize = c.req.valid("query")?.sample ?? 0;
+      try {
+        const tableId = await resolveViewTableId(dataset, view);
+        const table = await getDatasetTable(dataset, tableId);
+        const tableCols = await getTableColumns(tableId);
 
-      const selected = ["id", "ls_index", "x", "y", "cluster", "label", "deleted"];
-      const queryCols = selected.filter((col) => tableCols.includes(col));
-      const rawRows = (await paginatedScan(table, queryCols)) as JsonRecord[];
+        const selected = sampleSize > 0
+          ? ["x", "y", "cluster", "deleted"]
+          : ["id", "ls_index", "x", "y", "cluster", "label", "deleted"];
+        const queryCols = selected.filter((col) => tableCols.includes(col));
+        let rawRows = (await paginatedScan(table, queryCols)) as JsonRecord[];
 
-      const normalized = rawRows.map((row, idx) => {
-        const safe = jsonSafe(row) as JsonRecord;
-        const lsIndex = normalizeIndex(safe.ls_index) ?? idx;
-        return { ...safe, ls_index: lsIndex };
-      });
+        if (sampleSize > 0 && rawRows.length > sampleSize) {
+          rawRows = deterministicSample(rawRows, sampleSize);
+        }
 
-      return c.json(normalized);
-    } catch (err) {
-      console.error(err);
-      return c.json(
-        { error: "view_table_not_found", dataset, view },
-        404
-      );
-    }
-  })
+        const normalized = rawRows.map((row, idx) => {
+          const safe = jsonSafe(row) as JsonRecord;
+          const lsIndex = normalizeIndex(safe.ls_index) ?? idx;
+          return { ...safe, ls_index: lsIndex };
+        });
+
+        return c.json(normalized);
+      } catch (err) {
+        console.error(err);
+        return c.json(
+          { error: "view_table_not_found", dataset, view },
+          404
+        );
+      }
+    })
   .get("/datasets/:dataset/views/:view/rows", async (c) => {
     const { dataset, view } = c.req.param();
 

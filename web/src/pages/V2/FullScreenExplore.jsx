@@ -1417,6 +1417,11 @@ function ExploreContent() {
             ) : (
               <div className="viz-loading-placeholder" style={mapLoadingPlaceholderStyle}>
                 <div className="viz-loading-spinner" />
+                {dataset?.length ? (
+                  <div className="viz-loading-label">
+                    Loading {Number(dataset.length).toLocaleString()} points…
+                  </div>
+                ) : null}
               </div>
             )}
 

@@ -12,6 +12,7 @@ export function hashIndices(indices: Array<number | string> | null | undefined):
 
 export const queryKeys = {
   appConfig: () => ['appConfig'] as const,
+  datasets: () => ['datasets'] as const,
   scope: (datasetId: NullableScalar, scopeId: NullableScalar) =>
     ['scope', datasetId ?? null, scopeId ?? null] as const,
   scopeRows: (datasetId: NullableScalar, scopeId: NullableScalar) =>
@@ -89,4 +90,6 @@ export const queryKeys = {
     ['thread', datasetId ?? null, tweetId ?? null, descLimit ?? null] as const,
   quotes: (datasetId: NullableScalar, tweetId: NullableScalar) =>
     ['quotes', datasetId ?? null, tweetId ?? null] as const,
+  scopeThumbnailPoints: (datasetId: NullableScalar, scopeId: NullableScalar) =>
+    ['scopeThumbnailPoints', datasetId ?? null, scopeId ?? null] as const,
 };
