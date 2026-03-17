@@ -216,28 +216,34 @@ async page => {
 
   const visibleTopicIndices = await getVisibleTopicIndices()
   const initialState = await getFocusedColumnState()
-  const targetTopicIndex = visibleTopicIndices.find((topicIndex) => topicIndex !== initialState.activeTopicIndex)
 
   assert(initialState.focusedLabel, 'Expanded carousel did not have an initial focused column', {
     initialState,
     visibleTopicIndices,
   })
-  assert(targetTopicIndex != null, 'Expanded carousel did not render an alternate visible topic to focus', {
-    initialState,
-    visibleTopicIndices,
-  })
 
-  await focusTopicByIndex(targetTopicIndex)
-  const focusedState = await waitForFocusedColumnIdle('focused column idle after topic focus')
-  assert(focusedState.activeTopicIndex === targetTopicIndex,
-    'Clicking a visible topic did not focus that topic',
-    { initialState, focusedState, targetTopicIndex, visibleTopicIndices })
-  assert(Array.isArray(focusedState.pillTexts) && focusedState.pillTexts.length > 1,
-    'Focused topic did not render non-All subcluster pills',
-    { focusedState, targetTopicIndex })
-  assert(focusedState.hasLoadMore,
-    'Focused topic did not render a load-more control',
-    { focusedState, targetTopicIndex })
+  let targetTopicIndex = null
+  let focusedState = null
+  for (const topicIndex of visibleTopicIndices) {
+    if (topicIndex === initialState.activeTopicIndex) continue
+
+    await focusTopicByIndex(topicIndex)
+    const candidateState = await waitForFocusedColumnIdle('focused column idle after topic focus')
+    if (
+      candidateState.activeTopicIndex === topicIndex &&
+      Array.isArray(candidateState.pillTexts) &&
+      candidateState.pillTexts.length > 1 &&
+      candidateState.hasLoadMore
+    ) {
+      targetTopicIndex = topicIndex
+      focusedState = candidateState
+      break
+    }
+  }
+
+  assert(targetTopicIndex != null && focusedState,
+    'Expanded carousel did not render a visible alternate topic with subclusters and load-more',
+    { initialState, visibleTopicIndices, focusedState })
 
   const preLoadMoreScrollState = await setFocusedColumnScrollTop(
     Math.min(

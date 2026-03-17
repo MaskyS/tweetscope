@@ -1,10 +1,11 @@
 /**
- * Sort cluster items by mode, keeping 'unknown' (unclustered) at the end.
+ * Sort cluster items by mode, optionally keeping 'unknown' (unclustered) at the end.
  *
  * @param {Array<{cluster: object, originalIndex: number}>} items
  *   Items wrapping a cluster object and its original position.
  * @param {string} mode - 'popular' | 'largest' | 'az' | 'similar'
  * @param {'asc' | 'desc'} [direction]
+ * @param {{keepUnclusteredLast?: boolean}} [options]
  * @returns {{
  *   sortedItems: Array<{cluster: object, originalIndex: number}>,
  *   sortToOriginal: number[],
@@ -27,35 +28,39 @@ export const DEFAULT_SORT_DIRECTIONS = {
   similar: 'asc',
 };
 
-export function sortClusterItems(items, mode, direction) {
-  const real = [];
+export function sortClusterItems(items, mode, direction, options = {}) {
+  const { keepUnclusteredLast = true } = options;
+  const sorted = keepUnclusteredLast ? [] : [...items];
   let unc = null;
-  items.forEach((item) => {
-    if (String(item.cluster.cluster) === 'unknown') {
-      unc = item;
-    } else {
-      real.push(item);
-    }
-  });
+
+  if (keepUnclusteredLast) {
+    items.forEach((item) => {
+      if (String(item.cluster.cluster) === 'unknown') {
+        unc = item;
+      } else {
+        sorted.push(item);
+      }
+    });
+  }
 
   switch (mode) {
     case 'largest':
-      real.sort(
+      sorted.sort(
         (a, b) =>
           (b.cluster.cumulativeCount || b.cluster.count || 0) -
           (a.cluster.cumulativeCount || a.cluster.count || 0)
       );
       break;
     case 'az':
-      real.sort((a, b) =>
+      sorted.sort((a, b) =>
         (a.cluster.label || '').localeCompare(b.cluster.label || '')
       );
       break;
     case 'similar': {
-      const withC = real.filter(
+      const withC = sorted.filter(
         ({ cluster }) => getDisplayCentroidX(cluster) != null && getDisplayCentroidY(cluster) != null
       );
-      const noC = real.filter(
+      const noC = sorted.filter(
         ({ cluster }) => getDisplayCentroidX(cluster) == null || getDisplayCentroidY(cluster) == null
       );
       if (withC.length > 0) {
@@ -68,14 +73,14 @@ export function sortClusterItems(items, mode, direction) {
             Math.atan2(getDisplayCentroidY(a.cluster) - cy, getDisplayCentroidX(a.cluster) - cx) -
             Math.atan2(getDisplayCentroidY(b.cluster) - cy, getDisplayCentroidX(b.cluster) - cx)
         );
-        real.length = 0;
-        real.push(...withC, ...noC);
+        sorted.length = 0;
+        sorted.push(...withC, ...noC);
       }
       break;
     }
     case 'popular':
     default:
-      real.sort(
+      sorted.sort(
         (a, b) => (b.cluster.cumulativeLikes || 0) - (a.cluster.cumulativeLikes || 0)
       );
       break;
@@ -84,19 +89,19 @@ export function sortClusterItems(items, mode, direction) {
   const defaultDirection = DEFAULT_SORT_DIRECTIONS[mode] || DEFAULT_SORT_DIRECTIONS.popular;
   const resolvedDirection = direction === 'asc' || direction === 'desc' ? direction : defaultDirection;
   if (resolvedDirection !== defaultDirection) {
-    real.reverse();
+    sorted.reverse();
   }
 
-  if (unc) real.push(unc);
+  if (keepUnclusteredLast && unc) sorted.push(unc);
 
   // Build bidirectional index mappings
-  const sortToOriginal = real.map((r) => r.originalIndex);
+  const sortToOriginal = sorted.map((r) => r.originalIndex);
   const originalToSort = new Array(items.length);
   sortToOriginal.forEach((origIdx, sortIdx) => {
     originalToSort[origIdx] = sortIdx;
   });
 
-  return { sortedItems: real, sortToOriginal, originalToSort, unclustered: unc };
+  return { sortedItems: sorted, sortToOriginal, originalToSort, unclustered: unc };
 }
 
 /**
@@ -104,7 +109,12 @@ export function sortClusterItems(items, mode, direction) {
  */
 export function sortClusters(clusters, mode, direction) {
   const items = clusters.map((c, i) => ({ cluster: c, originalIndex: i }));
-  const { sortedItems, sortToOriginal, originalToSort } = sortClusterItems(items, mode, direction);
+  const { sortedItems, sortToOriginal, originalToSort } = sortClusterItems(
+    items,
+    mode,
+    direction,
+    { keepUnclusteredLast: false }
+  );
   return {
     sortedClusters: sortedItems.map((r) => r.cluster),
     sortToOriginal,
