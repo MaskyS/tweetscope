@@ -24,4 +24,6 @@ tools/twitter/visakanv_tweets_full.json
 .claude/debug/
 .claude/.playwright-cli/
 .playwright-cli/
+.claude.json
+.claude.json.backup.*
 *.env.vercel
