@@ -45,6 +45,20 @@ class EmbedScheduler {
     window.addEventListener('keydown', this.handleActivity, opts);
   }
 
+  destroy() {
+    if (!this.listenersAttached || typeof window === 'undefined') return;
+    const opts = { passive: true, capture: true };
+    window.removeEventListener('scroll', this.handleActivity, opts);
+    window.removeEventListener('wheel', this.handleActivity, opts);
+    window.removeEventListener('touchmove', this.handleActivity, opts);
+    window.removeEventListener('keydown', this.handleActivity, opts);
+    this.listenersAttached = false;
+    if (this.pumpTimer !== null) {
+      window.clearTimeout(this.pumpTimer);
+      this.pumpTimer = null;
+    }
+  }
+
   handleActivity() {
     this.lastActivityAt = Date.now();
     if (this.queue.length > 0) {

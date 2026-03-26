@@ -64,6 +64,7 @@ export async function embedQuery(
         Authorization: `Bearer ${opts.apiKey}`,
       },
       body: JSON.stringify(body),
+      signal: AbortSignal.timeout(30_000),
     });
 
     if (!res.ok) {
@@ -96,6 +97,7 @@ export async function embedQuery(
       Authorization: `Bearer ${opts.apiKey}`,
     },
     body: JSON.stringify(body),
+    signal: AbortSignal.timeout(30_000),
   });
 
   if (!res.ok) {

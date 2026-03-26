@@ -59,7 +59,9 @@ export function buildFilterWhere(filters: unknown): string | null {
       }
       case "contains": {
         const value = String(f.value ?? "");
-        clauses.push(`${col} LIKE ${sqlString(`%${value}%`)}`);
+        // Escape SQL LIKE wildcards to prevent pattern injection
+        const escaped = value.replace(/[%_\\]/g, (ch) => `\\${ch}`);
+        clauses.push(`${col} LIKE ${sqlString(`%${escaped}%`)} ESCAPE '\\'`);
         break;
       }
       default:

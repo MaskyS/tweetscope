@@ -90,6 +90,27 @@ if(not READ_ONLY):
 
 # Cache for resolved URLs to avoid repeated lookups
 URL_CACHE = {}
+URL_CACHE_MAX_SIZE = 10_000
+
+ALLOWED_RESOLVE_DOMAINS = {"t.co"}
+
+def _is_allowed_resolve_url(url):
+    """Only allow resolving t.co URLs to prevent SSRF."""
+    try:
+        from urllib.parse import urlparse
+        parsed = urlparse(url)
+        return parsed.hostname in ALLOWED_RESOLVE_DOMAINS
+    except Exception:
+        return False
+
+def _evict_url_cache():
+    """Evict oldest entries when cache exceeds max size."""
+    while len(URL_CACHE) > URL_CACHE_MAX_SIZE:
+        try:
+            oldest_key = next(iter(URL_CACHE))
+            del URL_CACHE[oldest_key]
+        except StopIteration:
+            break
 
 
 @app.errorhandler(RequestEntityTooLarge)
@@ -108,12 +129,15 @@ def resolve_url():
     if not url:
         return jsonify(error="No URL provided"), 400
 
+    if not _is_allowed_resolve_url(url):
+        return jsonify({"original": url, "final": url, "type": "external", "media_url": None})
+
     # Check cache first
     if url in URL_CACHE:
         return jsonify(URL_CACHE[url])
 
     try:
-        # Follow redirects to get final URL
+        # Follow redirects to get final URL (only t.co URLs reach here)
         response = requests.head(url, allow_redirects=True, timeout=5)
         final_url = response.url
 
@@ -145,12 +169,13 @@ def resolve_url():
         }
 
         # Cache the result
+        _evict_url_cache()
         URL_CACHE[url] = result
 
         return jsonify(result)
 
     except requests.RequestException as e:
-        return jsonify(error=str(e), original=url), 500
+        return jsonify(error="URL resolution failed", original=url), 500
 
 @app.route('/api/resolve-urls', methods=['POST'])
 def resolve_urls():
@@ -160,8 +185,14 @@ def resolve_urls():
     data = request.get_json()
     urls = data.get('urls', [])
 
+    if not isinstance(urls, list) or len(urls) > 50:
+        return jsonify(error="urls must be an array of at most 50 items"), 400
+
     results = []
     for url in urls:
+        if not _is_allowed_resolve_url(url):
+            results.append({"original": url, "final": url, "type": "external", "media_url": None})
+            continue
         if url in URL_CACHE:
             results.append(URL_CACHE[url])
         else:
@@ -193,6 +224,7 @@ def resolve_urls():
                     "type": content_type,
                     "media_url": media_url
                 }
+                _evict_url_cache()
                 URL_CACHE[url] = result
                 results.append(result)
 
@@ -211,7 +243,9 @@ Allow fetching of dataset files directly from disk
 """
 @app.route('/api/files/<path:datasetPath>', methods=['GET'])
 def send_file(datasetPath):
-    print("req url", request.url)
+    # Reject path traversal attempts
+    if '..' in datasetPath:
+        return jsonify({"error": "Invalid path"}), 400
     return send_from_directory(DATA_DIR, datasetPath)
 
 """
@@ -317,7 +351,7 @@ def column_filter():
             elif f["type"] == "in":
                 rows = rows[rows[f['column']].isin(f['value'])]
             elif f["type"] == "contains":
-                rows = rows[rows[f['column']].str.contains(f['value'])]
+                rows = rows[rows[f['column']].str.contains(f['value'], regex=False, na=False)]
 
     return jsonify(indices=rows.index.to_list())
 

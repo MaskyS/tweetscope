@@ -24,7 +24,7 @@ async function resolveRedirect(url: string): Promise<string> {
   }
 
   try {
-    const res = await fetch(url, { redirect: "manual" });
+    const res = await fetch(url, { redirect: "manual", signal: AbortSignal.timeout(5000) });
     const location = res.headers.get("location");
     return location ?? url;
   } catch {
@@ -46,6 +46,9 @@ export const resolveUrlRoutes = new Hono()
     const body = await c.req.json<{ urls?: string[] }>();
     if (!body.urls || !Array.isArray(body.urls)) {
       return c.json({ error: "urls array is required" }, 400);
+    }
+    if (body.urls.length > 50) {
+      return c.json({ error: "Maximum 50 URLs per batch" }, 400);
     }
 
     const results = await Promise.all(

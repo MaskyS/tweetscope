@@ -10,6 +10,7 @@ class UrlResolver {
     this.concurrentLimit = 3; // Max concurrent requests
     this.batchSize = 5; // URLs per batch request
     this.batchDelay = 100; // ms between batches
+    this.maxCacheSize = 5000; // Prevent unbounded memory growth
   }
 
   async resolve(urls) {
@@ -50,6 +51,16 @@ class UrlResolver {
     for (const result of resolved) {
       this.cache.set(result.original, result);
       this.pending.delete(result.original);
+    }
+
+    // Evict oldest entries if cache exceeds max size
+    if (this.cache.size > this.maxCacheSize) {
+      const excess = this.cache.size - this.maxCacheSize;
+      const keys = this.cache.keys();
+      for (let i = 0; i < excess; i++) {
+        const { value } = keys.next();
+        if (value) this.cache.delete(value);
+      }
     }
 
     const finalResults = [...results, ...resolved];

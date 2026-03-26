@@ -116,7 +116,13 @@ export const searchRoutes = new Hono()
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       console.error(`[NN] ${dataset}/${scope_id} query="${query}":`, message);
-      return c.json({ error: message }, 500);
+      // Don't leak internal error details to clients
+      const safeMessage = message.includes("VOYAGE_API_KEY")
+        ? "Search service configuration error"
+        : message.includes("not found") || message.includes("missing")
+          ? message
+          : "Search failed";
+      return c.json({ error: safeMessage }, 500);
     }
   })
   .get(
@@ -170,8 +176,10 @@ export const searchRoutes = new Hono()
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         console.error(`[FTS] ${dataset}/${scope_id} query="${query}":`, message);
-        const status = message.includes("not ready yet") ? 503 : 500;
-        return c.json({ error: message }, status);
+        const isNotReady = message.includes("not ready yet");
+        const status = isNotReady ? 503 : 500;
+        const safeMessage = isNotReady ? message : "Full-text search failed";
+        return c.json({ error: safeMessage }, status);
       }
     },
   );

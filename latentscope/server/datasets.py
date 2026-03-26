@@ -14,6 +14,15 @@ datasets_write_bp = Blueprint('datasets_write_bp', __name__)
 DATA_DIR = os.getenv('LATENT_SCOPE_DATA')
 
 
+def _safe_dataset_path(dataset, *parts):
+    """Build a safe path under DATA_DIR, rejecting path traversal attempts."""
+    candidate = os.path.realpath(os.path.join(DATA_DIR, dataset, *parts))
+    data_root = os.path.realpath(DATA_DIR)
+    if not candidate.startswith(data_root + os.sep) and candidate != data_root:
+        raise ValueError(f"Invalid path: escapes data directory")
+    return candidate
+
+
 
 """
 Get the essential metadata for all available datasets.
@@ -31,7 +40,7 @@ def get_datasets():
                     jsonData = json.load(file)
                     jsonData['id'] = dir
                     datasets.append(jsonData)
-                except:
+                except (json.JSONDecodeError, OSError, ValueError):
                     print("Error reading meta.json", file_path)
 
     datasets.sort(key=lambda x: x.get('id'))
@@ -63,21 +72,26 @@ def scan_for_json_files(directory_path, match_pattern=r".*\.json$"):
 
 @datasets_bp.route('/<dataset>/meta', methods=['GET'])
 def get_dataset_meta(dataset):
-    file_path = os.path.join(DATA_DIR, dataset, "meta.json")
+    try:
+        file_path = _safe_dataset_path(dataset, "meta.json")
+    except ValueError:
+        return jsonify({"error": "Invalid dataset"}), 400
     with open(file_path, 'r', encoding='utf-8') as json_file:
         json_contents = json.load(json_file)
     return jsonify(json_contents)
 
-@datasets_write_bp.route('/<dataset>/meta/update', methods=['GET'])
+@datasets_write_bp.route('/<dataset>/meta/update', methods=['POST'])
 def update_dataset_meta(dataset):
-    key = request.args.get('key')
-    value = request.args.get('value')
-    try:
-        value = json.loads(value)
-    except json.JSONDecodeError as err:
-        print("Invalid JSON format for value", value, err)
+    data = request.get_json()
+    if not data or 'key' not in data or 'value' not in data:
+        return jsonify({"error": "Missing key or value in request body"}), 400
+    key = data['key']
+    value = data['value']
 
-    file_path = os.path.join(DATA_DIR, dataset, "meta.json")
+    try:
+        file_path = _safe_dataset_path(dataset, "meta.json")
+    except ValueError:
+        return jsonify({"error": "Invalid dataset"}), 400
     with open(file_path, 'r', encoding='utf-8') as json_file:
         json_contents = json.load(json_file)
     json_contents[key] = value
@@ -89,43 +103,63 @@ def update_dataset_meta(dataset):
 
 @datasets_bp.route('/<dataset>/embeddings', methods=['GET'])
 def get_dataset_embeddings(dataset):
-    directory_path = os.path.join(DATA_DIR, dataset, "embeddings")
-    # directory_path = os.path.join(DATA_DIR, dataset, "umaps")
+    try:
+        directory_path = _safe_dataset_path(dataset, "embeddings")
+    except ValueError:
+        return jsonify({"error": "Invalid dataset"}), 400
     return scan_for_json_files(directory_path)
 
 @datasets_bp.route('/<dataset>/embeddings/<embedding>', methods=['GET'])
 def get_dataset_embedding(dataset, embedding):
-    file_path = os.path.join(DATA_DIR, dataset, "embeddings", embedding + ".json")
+    try:
+        file_path = _safe_dataset_path(dataset, "embeddings", embedding + ".json")
+    except ValueError:
+        return jsonify({"error": "Invalid dataset"}), 400
     with open(file_path, 'r', encoding='utf-8') as json_file:
         json_contents = json.load(json_file)
     return jsonify(json_contents)
 
 @datasets_bp.route('/<dataset>/umaps', methods=['GET'])
 def get_dataset_umaps(dataset):
-    directory_path = os.path.join(DATA_DIR, dataset, "umaps")
+    try:
+        directory_path = _safe_dataset_path(dataset, "umaps")
+    except ValueError:
+        return jsonify({"error": "Invalid dataset"}), 400
     return scan_for_json_files(directory_path)
 
 @datasets_bp.route('/<dataset>/umaps/<umap>', methods=['GET'])
 def get_dataset_umap(dataset, umap):
-    file_path = os.path.join(DATA_DIR, dataset, "umaps", umap + ".json")
+    try:
+        file_path = _safe_dataset_path(dataset, "umaps", umap + ".json")
+    except ValueError:
+        return jsonify({"error": "Invalid dataset"}), 400
     with open(file_path, 'r', encoding='utf-8') as json_file:
         json_contents = json.load(json_file)
     return jsonify(json_contents)
 
 @datasets_bp.route('/<dataset>/umaps/<umap>/points', methods=['GET'])
 def get_dataset_umap_points(dataset, umap):
-    file_path = os.path.join(DATA_DIR, dataset, "umaps", umap + ".parquet")
+    try:
+        file_path = _safe_dataset_path(dataset, "umaps", umap + ".parquet")
+    except ValueError:
+        return jsonify({"error": "Invalid dataset"}), 400
     df = pd.read_parquet(file_path)
     return df.to_json(orient="records")
 
 @datasets_bp.route('/<dataset>/clusters', methods=['GET'])
 def get_dataset_clusters(dataset):
-    directory_path = os.path.join(DATA_DIR, dataset, "clusters")
+    try:
+        directory_path = _safe_dataset_path(dataset, "clusters")
+    except ValueError:
+        return jsonify({"error": "Invalid dataset"}), 400
     return scan_for_json_files(directory_path, match_pattern=r"cluster-\d+\.json")
 
 @datasets_bp.route('/<dataset>/clusters/<cluster>', methods=['GET'])
 def get_dataset_cluster(dataset, cluster):
-    file_path = os.path.join(DATA_DIR, dataset, "clusters", cluster + ".json")
+    try:
+        file_path = _safe_dataset_path(dataset, "clusters", cluster + ".json")
+    except ValueError:
+        return jsonify({"error": "Invalid dataset"}), 400
     with open(file_path, 'r', encoding='utf-8') as json_file:
         json_contents = json.load(json_file)
     return jsonify(json_contents)
@@ -140,16 +174,20 @@ def get_dataset_cluster(dataset, cluster):
 @datasets_bp.route('/<dataset>/clusters/<cluster>/indices', methods=['GET'])
 def get_dataset_cluster_indices(dataset, cluster):
     file_name = cluster + ".parquet"
-    file_path = os.path.join(DATA_DIR, dataset, "clusters", file_name)
+    try:
+        file_path = _safe_dataset_path(dataset, "clusters", file_name)
+    except ValueError:
+        return jsonify({"error": "Invalid dataset"}), 400
     df = pd.read_parquet(file_path)
     return df.to_json(orient="records")
 
 @datasets_bp.route('/<dataset>/clusters/<cluster>/labels/<id>', methods=['GET'])
 def get_dataset_cluster_labels(dataset, cluster, id):
-    # if model == "default":
-    #     return get_dataset_cluster_labels_default(dataset, cluster)
     file_name = cluster + "-labels-" + id + ".parquet"
-    file_path = os.path.join(DATA_DIR, dataset, "clusters", file_name)
+    try:
+        file_path = _safe_dataset_path(dataset, "clusters", file_name)
+    except ValueError:
+        return jsonify({"error": "Invalid dataset"}), 400
     df = pd.read_parquet(file_path)
     df.reset_index(inplace=True)
     return df.to_json(orient="records")
@@ -181,7 +219,10 @@ def get_dataset_cluster_labels(dataset, cluster, id):
 
 @datasets_bp.route('/<dataset>/clusters/<cluster>/labels_available', methods=['GET'])
 def get_dataset_cluster_labels_available(dataset, cluster):
-    directory_path = os.path.join(DATA_DIR, dataset, "clusters")
+    try:
+        directory_path = _safe_dataset_path(dataset, "clusters")
+    except ValueError:
+        return jsonify({"error": "Invalid dataset"}), 400
     return scan_for_json_files(directory_path, match_pattern=rf"{cluster}-labels-.*\.json")
     # try:
     #     files = sorted(os.listdir(directory_path), key=lambda x: os.path.getmtime(os.path.join(directory_path, x)), reverse=True)
@@ -207,24 +248,31 @@ def get_next_scopes_number(dataset):
 
 @datasets_bp.route('/<dataset>/scopes', methods=['GET'])
 def get_dataset_scopes(dataset):
-    directory_path = os.path.join(DATA_DIR, dataset, "scopes")
+    try:
+        directory_path = _safe_dataset_path(dataset, "scopes")
+    except ValueError:
+        return jsonify({"error": "Invalid dataset"}), 400
     print("dataset", dataset, directory_path)
     return scan_for_json_files(directory_path, match_pattern=r".*[0-9]+\.json$")
 
 @datasets_bp.route('/<dataset>/scopes/<scope>', methods=['GET'])
 def get_dataset_scope(dataset, scope):
-    directory_path = os.path.join(DATA_DIR, dataset, "scopes")
-    file_path = os.path.join(directory_path, scope + ".json")
+    try:
+        file_path = _safe_dataset_path(dataset, "scopes", scope + ".json")
+    except ValueError:
+        return jsonify({"error": "Invalid dataset"}), 400
     with open(file_path, 'r', encoding='utf-8') as json_file:
         json_contents = json.load(json_file)
     return jsonify(json_contents)
 
 @datasets_bp.route('/<dataset>/scopes/<scope>/parquet', methods=['GET'])
 def get_dataset_scope_parquet(dataset, scope):
-    directory_path = os.path.join(DATA_DIR, dataset, "scopes")
-    scope_file_path = os.path.join(directory_path, scope + ".parquet")
-    scope_input_file_path = os.path.join(directory_path, scope + "-input.parquet")
-    dataset_input_file_path = os.path.join(DATA_DIR, dataset, "input.parquet")
+    try:
+        scope_file_path = _safe_dataset_path(dataset, "scopes", scope + ".parquet")
+        scope_input_file_path = _safe_dataset_path(dataset, "scopes", scope + "-input.parquet")
+        dataset_input_file_path = _safe_dataset_path(dataset, "input.parquet")
+    except ValueError:
+        return jsonify({"error": "Invalid dataset"}), 400
 
     required_columns = [
         "x",
@@ -297,13 +345,19 @@ def get_dataset_scope_parquet(dataset, scope):
 
     return df.to_json(orient="records")
 
-@datasets_write_bp.route('/<dataset>/scopes/<scope>/description', methods=['GET'])
+@datasets_write_bp.route('/<dataset>/scopes/<scope>/description', methods=['POST'])
 def overwrite_scope_description(dataset, scope):
-    new_label = request.args.get('label')
-    new_description = request.args.get('description')
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "Missing request body"}), 400
+    new_label = data.get('label')
+    new_description = data.get('description')
 
     file_name = scope + ".json"
-    file_path = os.path.join(DATA_DIR, dataset, "scopes", file_name)
+    try:
+        file_path = _safe_dataset_path(dataset, "scopes", file_name)
+    except ValueError:
+        return jsonify({"error": "Invalid dataset"}), 400
     with open(file_path, 'r', encoding='utf-8') as json_file:
         json_contents = json.load(json_file)
 
@@ -312,15 +366,21 @@ def overwrite_scope_description(dataset, scope):
 
     with open(file_path, 'w', encoding='utf-8') as json_file:
         json.dump(json_contents, json_file)
-    
+
     return jsonify({"success": True, "message": "Description updated successfully"})
 
-@datasets_write_bp.route('/<dataset>/scopes/<scope>/new-cluster', methods=['GET'])
+@datasets_write_bp.route('/<dataset>/scopes/<scope>/new-cluster', methods=['POST'])
 def new_scope_cluster(dataset, scope):
-    new_label = request.args.get('label')
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "Missing request body"}), 400
+    new_label = data.get('label')
 
     file_name = scope + ".json"
-    file_path = os.path.join(DATA_DIR, dataset, "scopes", file_name)
+    try:
+        file_path = _safe_dataset_path(dataset, "scopes", file_name)
+    except ValueError:
+        return jsonify({"error": "Invalid dataset"}), 400
     with open(file_path, 'r', encoding='utf-8') as json_file:
         json_contents = json.load(json_file)
 
@@ -342,7 +402,10 @@ def new_scope_cluster(dataset, scope):
 
 @datasets_bp.route('/<dataset>/export/list', methods=['GET'])
 def get_dataset_export_list(dataset):
-    directory_path = os.path.join(DATA_DIR, dataset)
+    try:
+        directory_path = _safe_dataset_path(dataset)
+    except ValueError:
+        return jsonify({"error": "Invalid dataset"}), 400
     print("dataset", dataset, directory_path)
     # scan the directory for files and directories
     # then walk the directories to find all the files
@@ -367,7 +430,10 @@ def get_dataset_export_list(dataset):
 
 @datasets_bp.route('/<dataset>/plot/<scope>/list', methods=['GET'])
 def get_dataset_plot_list(dataset, scope):
-    directory_path = os.path.join(DATA_DIR, dataset, "plots")
+    try:
+        directory_path = _safe_dataset_path(dataset, "plots")
+    except ValueError:
+        return jsonify({"error": "Invalid dataset"}), 400
     print("dataset", dataset, directory_path)
     if not os.path.exists(directory_path):
         return jsonify([])

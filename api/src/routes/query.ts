@@ -119,7 +119,7 @@ export const queryRoutes = new Hono()
     const indexColumn = resolveIndexColumn(tableColumns);
 
     const perPage = 100;
-    const page = Math.max(0, normalizeIndex(payload.page) ?? 0);
+    const page = Math.min(Math.max(0, normalizeIndex(payload.page) ?? 0), 10_000);
     const offset = page * perPage;
     const sort = payload.sort as JsonRecord | undefined;
 
